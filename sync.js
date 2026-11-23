@@ -8,7 +8,7 @@
    - approvals, users, my account, import of the old backup with a check screen
    The app's own screens and calculations are not changed.
    ========================================================= */
-import { createCloud, safeId } from './cloud.js';
+import { createCloud, safeId } from './cloud.js?v=3.0.1';
 
 const ENTRY_KEYS = ['machineLog', 'dieselLog', 'expenseLog', 'vendorPayments', 'murumLog', 'funds', 'ownerPayments', 'bills', 'reminders'];
 const LOCAL_KEYS = ['sites', 'mfunds', 'activeId', 'lastSnap', 'lastBackup', 'theme', 'lastNotif', 'lastNotify', 'userName', 'logo', 'billLogo', 'watermark', 'wmOpacity'];
@@ -95,8 +95,9 @@ function changedKeys(a, b) { const ks = new Set([...Object.keys(a || {}), ...Obj
 
 /* ---------- push: send what changed in DB ---------- */
 let pushing = null;
+let HOLD = false;   /* true while an import is being prepared: the app's own save must not upload half a file */
 function push() {
-  if (!READY || !CLOUD || !ME.uid) return Promise.resolve(true);
+  if (HOLD || !READY || !CLOUD || !ME.uid) return Promise.resolve(true);
   fixIds();
   const cur = buildDocs(DB);
   const ops = [], paths = [], bad = [];
@@ -182,7 +183,10 @@ async function writeFailed(e, paths) {
   /* show what the online database really holds for these documents (many at once: one download instead of one per entry) */
   let server = null;
   if (paths.length > 30) { try { server = new Map((await CLOUD.getAllServer()).map(x => [x.path, x.data])); } catch (x) { server = null; } }
-  for (const p of paths) { try { const d = server ? (server.get(p) || null) : await CLOUD.getDocServer(p); applyDocs([{ type: d ? 'modified' : 'removed', path: p, docId: p.split('/').pop(), data: d || {} }]); } catch (x) {} }
+  for (const p of paths) {
+    try { const d = server ? (server.get(p) || null) : await CLOUD.getDocServer(p); applyDocs([{ type: d ? 'modified' : 'removed', path: p, docId: p.split('/').pop(), data: d || {} }]); }
+    catch (x) { REMOTE.delete(p); META.delete(p); }   /* could not see it online: forget it, so the next save sends it again */
+  }
   persist(); rerender();
 }
 
@@ -199,12 +203,12 @@ function applyDocs(changes) {
     const [biz, meta] = splitMeta(ch.data || {});
     const gone = ch.type === 'removed' || meta._del || meta._test;
     if (k === 'app') {
-      if (gone) continue;
+      if (gone) { REMOTE.delete(p); META.delete(p); continue; }   /* not online (any more): keep the phone's values, so they are sent again */
       const old = REMOTE.get(p) || {};
       for (const key of Object.keys(old)) if (!(key in biz)) delete DB[key];
       Object.assign(DB, clone(biz));
     } else if (k === 'logos') {
-      if (gone) continue;
+      if (gone) { REMOTE.delete(p); META.delete(p); continue; }
       DB.logo = biz.logo || ''; DB.billLogo = biz.billLogo || '';
       if (!DB.logo) delete DB.logo; if (!DB.billLogo) delete DB.billLogo;
     } else if (k === 'site') {
@@ -450,9 +454,29 @@ function fileProblem(f, msg, txt) {
   const html = `<p class="g-msg">${escH(msg)}</p><div class="card"><div class="pad tiny">File: <b>${escH(f.name)}</b><br>Size: ${(f.size / 1024).toFixed(1)} KB<br>Starts with: <code>${escH(String(txt || '').slice(0, 70))}</code></div></div><p class="tiny">Send Claude a screenshot of this screen.</p>`;
   if (STARTED) openSheet('Could not import this file', html, null, null); else gate('<h2>Could not import this file</h2>' + html + '<button class="btn" data-x="pickBackup">Choose another file</button>');
 }
+let LAST_IMPORT = null;
+const RULES_URL = 'https://github.com/Rushi99080/veershree-expense/blob/main/firestore.rules';
+async function gateRules(msg) {
+  let rules = '';
+  try { const r = await fetch('firestore.rules', { cache: 'no-cache' }); if (r.ok) rules = await r.text(); } catch (e) { }
+  gate(`<h2>One step in Firebase first</h2><p class="g-msg">${escH(msg)}</p>
+    <ol class="g-steps"><li>Tap <b>Copy the new rules</b> below.</li>
+    <li>Open <b>console.firebase.google.com</b> → project <b>veershree-expense</b> → <b>Firestore Database</b> → <b>Rules</b>.</li>
+    <li>Delete everything in the box, paste, and tap <b>Publish</b>.</li>
+    <li>Wait one minute, come back here and tap <b>Try again</b>.</li></ol>
+    ${rules ? `<button class="btn" data-x="copy" data-v="${escH(rules)}">Copy the new rules</button>` : `<p class="tiny">The rules are here: <a href="${RULES_URL}" target="_blank" rel="noopener">firestore.rules</a> (open, tap Raw, copy all).</p>`}
+    <button class="btn sec" data-x="importRetry">Try again</button>`);
+}
 async function importBackup(d, fileName) {
   if (!isAdmin()) return say('Only the admin can import.');
   if (!navigator.onLine) return say('Connect to the internet to import.');
+  LAST_IMPORT = { d, fileName };
+  /* make sure the online database already has this app's security rules — otherwise every upload would be refused */
+  try { await CLOUD.probeRead('site', 'rules-check'); }
+  catch (e) {
+    if (e && e.code === 'permission-denied') return gateRules('The security rules in Firebase are still the ones for the earlier test app, so the online database would refuse the upload. Nothing has been uploaded yet.');
+    return gate(`<h2>No connection</h2><p class="g-msg">Could not reach the online database (${escH((e && e.code) || 'offline')}). Check the internet and try again. Nothing has been uploaded yet.</p><button class="btn" data-x="importRetry">Try again</button>`);
+  }
   const raw = clone(d);
   const sites = readSites(raw);
   const n = sites.reduce((a, s) => a + ENTRY_KEYS.reduce((b, k) => b + ((s[k] || []).length), 0), 0);
@@ -462,10 +486,11 @@ async function importBackup(d, fileName) {
   delete DB.lastSnap;
   Object.assign(DB, keep);
   DB.sites = sites;
-  migrate();                         /* the app's own clean-up, exactly as when it opens a file */
-  await sleep(200);
+  HOLD = true;
+  try { migrate(); await sleep(400); }   /* the app's own clean-up, exactly as when it opens a file */
+  finally { HOLD = false; }
   const ok = await push();
-  if (!ok) { gate(`<h2>Upload stopped</h2><p class="g-msg">${escH(ERR)}</p><p class="tiny">Nothing already uploaded is lost. Try again: entries already online are skipped.</p><button class="btn" data-x="reload">Try again</button>`); return; }
+  if (!ok) { gate(`<h2>Upload stopped</h2><p class="g-msg">${escH(ERR)}</p><p class="tiny">Your backup file is not changed. Try again: entries already online are skipped, the rest are sent.</p><button class="btn" data-x="importRetry">Try again</button>`); return; }
   try { await CLOUD.waitPending(); } catch (e) {}
   STARTED ? null : await startApp();
   await runCheck(d, fileName);
@@ -741,6 +766,7 @@ document.addEventListener('click', async e => {
       case 'back': gateLogin('', await CLOUD.ownerClaimed()); break;
       case 'pickBackup': pickFile((f, txt) => { const d = parseBackup(f, txt); if (d) importBackup(d, f.name); }); break;
       case 'startBlank': await startApp(); break;
+      case 'importRetry': if (LAST_IMPORT) importBackup(LAST_IMPORT.d, LAST_IMPORT.fileName); else location.reload(); break;
     }
     return;
   }
