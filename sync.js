@@ -9,6 +9,7 @@
    The app's own screens and calculations are not changed.
    ========================================================= */
 import { createCloud, safeId } from './cloud.js?v=3.1.0';
+import { pickPhoto, toJpeg, readMachinePhoto, readBillPhoto, matchMachine, matchName, testKey, aiConfig, aiForget } from './ai.js?v=1.0.0';
 
 const ENTRY_KEYS = ['machineLog', 'dieselLog', 'expenseLog', 'vendorPayments', 'murumLog', 'funds', 'ownerPayments', 'bills', 'reminders'];
 const LOCAL_KEYS = ['sites', 'mfunds', 'activeId', 'lastSnap', 'lastBackup', 'theme', 'lastNotif', 'lastNotify', 'userName', 'logo', 'billLogo', 'watermark', 'wmOpacity'];
@@ -739,6 +740,7 @@ function menuHtml() {
   return `<div class="shead">Team and account</div><div class="card mlist">
     ${(isAdmin() || isMgr()) ? line('approvals', 'Waiting for approval', 'check', n ? `<span class="pill u">${n}</span>` : '') : ''}
     ${isAdmin() ? line('users', 'Users and roles', 'manager') : ''}
+    ${isAdmin() ? line('photoAi', 'Photo reading (AI)', 'camera') : ''}
     ${line('account', 'My account · ' + escH(ROLE_LABEL[ME.role] || ''), 'person')}</div>`;
 }
 function sideHtml() {
@@ -749,6 +751,14 @@ function sideHtml() {
     <button data-x="account">${ICON.person || ''}<span>${escH(ME.name)} · ${escH(ROLE_LABEL[ME.role] || '')}</span></button></div>`;
 }
 function afterRender() {
+  try {
+    if (TAB === 'machine' && sub('machine') === 'log' && canScan() && !$q('#smScanLog')) {
+      const st = site(), f = UI.mlFilter || '';
+      const m = f && f !== '__none' ? (st.machines || []).find(x => sameNo(x.no, f)) : null;
+      const add = $q('#app main [data-act=mlAdd]');
+      if (add) add.insertAdjacentHTML('afterend', `<div class="card mlist" id="smScanLog" style="margin-top:12px"><div class="row" data-x="scanLog" data-v="${escH(m ? m.no : '')}">${ava('', 'camera', 'c3')}<div class="main"><div class="ttl">${m ? 'Scan ' + escH(m.no) + ' log' : 'Scan log page or meter'}</div><div class="sub">${m ? escH(m.type || 'Machine') + ' · ' : ''}photo of the log book or hour meter → entries</div></div>${ic('chevR', 'chev')}</div></div>`);
+    }
+  } catch (e) { }
   if (RULES_OLD && isAdmin() && TAB === 'dash' && !$q('#smRulesCard')) {
     const main = $q('#app main');
     if (main) main.insertAdjacentHTML('afterbegin', `<div class="card mlist" id="smRulesCard"><div class="row" data-x="rules">${ava('', 'gear', 'c2')}<div class="main"><div class="ttl">Update the Firebase rules</div><div class="sub">Needed for the Supervisor app · tap to see how</div></div>${ic('chevR', 'chev')}</div></div>`);
@@ -769,6 +779,247 @@ function afterRender() {
 function scopeManagers(l) { return isMgr() ? l.filter(m => norm(m.name) === norm(ME.person)) : l; }
 function can(what) { if (what === 'import') return isAdmin(); return true; }
 try { if (!ICON.check) ICON.check = SVG('<path d="M4.5 12.5l5 5L19.5 7"/>'); } catch (e) { }
+try { if (!ICON.camera) ICON.camera = SVG('<path d="M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4z"/><circle cx="12" cy="13.2" r="3.4"/>'); } catch (e) { }
+
+/* ================= photo reading (meter, log page, bills) ================= */
+const canScan = () => isAdmin() || isMgr();
+const SCAN_FORMS = { 'New machine entry': 'machine', 'Edit machine entry': 'machine', 'New diesel entry': 'diesel', 'Edit diesel entry': 'diesel', 'New expense': 'expense', 'Edit expense': 'expense' };
+let SCAN = null;   // the last photo read for the review sheet
+try {
+  const orig = window.openSheet;
+  if (typeof orig === 'function') window.openSheet = function (title) {
+    const r = orig.apply(this, arguments);
+    try { const k = SCAN_FORMS[String(title)]; if (k && canScan()) injectScan(k); } catch (e) { }
+    return r;
+  };
+} catch (e) { }
+function injectScan(kind) {
+  const b = $q('#modal .sbd'); if (!b || b.querySelector('.smscan')) return;
+  b.insertAdjacentHTML('afterbegin', `<div class="smscan"><button class="btn sec" data-x="scanForm" data-v="${kind}">${ICON.camera}${kind === 'machine' ? 'Read meter or log photo' : 'Read bill photo'}</button><div class="tiny">Fills the boxes below from a photo. Check them, then Save.</div><div id="smRead"></div></div>`);
+}
+function busy(on, msg) {
+  let el = document.getElementById('smBusy');
+  if (!on) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'smBusy'; document.body.appendChild(el); }
+  el.innerHTML = `<div><i></i>${escH(msg || 'Reading the photo…')}</div>`;
+}
+function scanError(e) {
+  if (e && e.message === 'NO_KEY') {
+    if (isAdmin()) { closeSheet(); openPhotoAi('Photo reading is not switched on yet. It takes two minutes:'); }
+    else say('Photo reading is not switched on yet. Ask the admin (Menu → Photo reading).');
+    return;
+  }
+  say((e && e.message) || 'Photo reading failed.');
+}
+const setV = (id, v) => { const el = document.getElementById(id); if (!el || v === '' || v == null) return false; el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true; };
+const fmtN = v => (v === '' || v == null) ? '—' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+function lastOutOf(s, no, beforeDate) {
+  const l = (s.machineLog || []).filter(r => sameNo(r.machineNo, no) && has(r.outR) && (!beforeDate || r.date <= beforeDate));
+  let best = null; for (const r of l) if (!best || r.date > best.date || (r.date === best.date && num(r.outR) > num(best.outR))) best = r;
+  return best ? { outR: best.outR, date: best.date } : null;
+}
+function machineCtx(s, no, date) {
+  const m = no ? (s.machines || []).find(x => sameNo(x.no, no)) : null, l = no ? lastOutOf(s, no, date) : null;
+  return { site: s.name, today: today(), machineNo: m ? m.no : '', machineType: m ? m.type : '', lastOut: l ? l.outR : '', lastDate: l ? l.date : '', machines: activeMachines(s) };
+}
+function readNote(html) { const n = document.getElementById('smRead'); if (n) n.innerHTML = `<div class="smread">${html}</div>`; }
+function fillMachineForm(s, r) {
+  const no = val('f_no'), ctx = machineCtx(s, no, val('f_date'));
+  if (r.kind === 'meter' && r.meterReading !== '') {
+    const rd = r.meterReading, inV = val('f_in');
+    let msg = '';
+    if (inV === '' && ctx.lastOut !== '' && rd >= num(ctx.lastOut)) { setV('f_in', ctx.lastOut); setV('f_out', rd); msg = `Meter <b>${fmtN(rd)}</b> → Out. In = last out reading ${fmtN(ctx.lastOut)} (${fmtDate(ctx.lastDate)}).`; }
+    else if (inV === '') { setV('f_in', rd); msg = `Meter <b>${fmtN(rd)}</b> → In reading.`; }
+    else { setV('f_out', rd); msg = `Meter <b>${fmtN(rd)}</b> → Out.` + (rd < num(inV) ? ' <b>It is lower than the In reading — check.</b>' : ''); }
+    readNote(msg + (r.note ? '<br>' + escH(r.note) : ''));
+    return;
+  }
+  const row = r.rows.find(x => x.date === val('f_date')) || r.rows[0];
+  if (!row) { readNote('No reading found in this photo.' + (r.note ? ' ' + escH(r.note) : '')); return; }
+  const m = row.machineNo ? matchMachine(s.machines || [], row.machineNo) : '';
+  if (row.date && row.date <= today()) setV('f_date', row.date);
+  if (m && activeMachines(s).some(x => x.no === m)) setV('f_no', m);
+  setV('f_in', row.inR); setV('f_out', row.outR); setV('f_dsl', row.diesel); if (row.remark && !val('f_rem')) setV('f_rem', row.remark);
+  readNote(`Read: ${row.date ? fmtDate(row.date) + ' · ' : ''}${row.machineNo ? escH(row.machineNo) + (m ? '' : ' (not in the machine list)') + ' · ' : ''}In ${fmtN(row.inR)} · Out ${fmtN(row.outR)}${row.diesel !== '' ? ' · ' + fmtN(row.diesel) + ' L' : ''}${r.note ? '<br>' + escH(r.note) : ''}`);
+}
+function fillBillForm(s, kind, r) {
+  const parts = [];
+  if (r.date && r.date <= today()) { setV('f_date', r.date); parts.push(fmtDate(r.date)); }
+  if (kind === 'diesel') {
+    const v = matchName(s.dieselVendors, r.vendor);
+    if (v) setV('f_v', v); else if (r.vendor && !val('f_rem')) setV('f_rem', 'Vendor on bill: ' + r.vendor);
+    setV('f_l', r.litres); setV('f_amt', r.amount); if (r.billNo) setV('f_bill', r.billNo);
+    parts.push((v || r.vendor || 'vendor not read') + (r.vendor && !v ? ' (not in your diesel vendor list — pick it)' : ''), fmtN(r.litres) + ' L', '₹' + fmtN(r.amount), r.billNo ? 'bill ' + r.billNo : '');
+  } else {
+    const c = matchName(s.categories, r.category), v = matchName(s.vendors, r.vendor);
+    if (c) setV('f_cat', c);
+    if (!val('f_desc')) setV('f_desc', [r.items, r.vendor && !v ? r.vendor : ''].filter(Boolean).join(' — '));
+    setV('f_amt', r.amount); if (v) setV('f_v', v);
+    if (r.billNo && !val('f_rem')) setV('f_rem', 'Bill ' + r.billNo);
+    parts.push(r.vendor || 'vendor not read', '₹' + fmtN(r.amount), c ? 'category ' + c : 'pick the category');
+  }
+  readNote('Read: ' + parts.filter(Boolean).map(escH).join(' · ') + (r.note ? '<br>' + escH(r.note) : ''));
+}
+async function scanForm(kind) {
+  const file = await pickPhoto(); if (!file) return;
+  const s = site(); busy(true);
+  try {
+    const img = await toJpeg(file);
+    if (kind === 'machine') {
+      const no = val('f_no'), ctx = machineCtx(s, no, val('f_date'));
+      const r = await readMachinePhoto(CLOUD, img.b64, ctx);
+      if (r.kind === 'log' && r.rows.length > 1) { closeSheet(); SCAN = { s, r, img, no }; openScanReview(); return; }
+      fillMachineForm(s, r);
+    } else {
+      const r = await readBillPhoto(CLOUD, img.b64, { kind, vendors: kind === 'diesel' ? s.dieselVendors : s.vendors, categories: kind === 'expense' ? s.categories : [] });
+      fillBillForm(s, kind, r);
+    }
+  } catch (e) { scanError(e); } finally { busy(false); }
+}
+async function scanLog(no, strong) {
+  LAST_OPEN = '';
+  const s = site();
+  let img = SCAN && strong ? SCAN.img : null;
+  if (!img) { const file = await pickPhoto(); if (!file) return; busy(true); try { img = await toJpeg(file); } catch (e) { busy(false); return say(e.message); } }
+  busy(true, strong ? 'Reading again, more carefully…' : 'Reading the photo…');
+  try {
+    const r = await readMachinePhoto(CLOUD, img.b64, machineCtx(s, no, today()), strong);
+    if (r.kind === 'meter' && r.meterReading !== '' && !r.rows.length) {
+      closeSheet(); machineForm(s, null); if (no) setV('f_no', no); fillMachineForm(s, r); return;
+    }
+    if (!r.rows.length) { say('No readings found in this photo.' + (r.note ? ' ' + r.note : '')); return; }
+    SCAN = { s, r, img, no }; openScanReview();
+  } catch (e) { scanError(e); } finally { busy(false); }
+}
+function openScanReview() {
+  const { s, r, img, no } = SCAN;
+  const all = s.machines || [];
+  const rows = r.rows.map(x => ({ ...x, m: (x.machineNo ? matchMachine(all, x.machineNo) : '') || (x.machineNo ? '' : no || '') }))
+    .sort((a, b) => (a.date || '9').localeCompare(b.date || '9'));
+  const opts = cur => `<option value="">— pick —</option>` + all.map(m => `<option${m.no === cur ? ' selected' : ''}>${escH(m.no)}</option>`).join('');
+  const start = x => scanMatch(s, { date: x.date, no: x.m, inR: x.inR, outR: x.outR, diesel: x.diesel, remark: x.remark }).mode;
+  SCAN.rows = rows;
+  openSheet('Check the rows from the photo', `
+    <div class="card"><div class="pad">
+      <img class="smscanimg" src="${img.preview}" alt="The photo" data-x="scanZoom">
+      <div class="tiny" style="margin-top:8px;line-height:1.6">Read <b>${rows.length}</b> row${rows.length === 1 ? '' : 's'}${no ? ' for <b>' + escH(no) + '</b>' : ''}. Check each row against the photo, fix anything wrong, then add. Rows already in the log are left unticked.</div>
+      ${r.note ? `<div class="smread">${escH(r.note)}</div>` : ''}
+    </div></div>
+    <div id="smRows">${rows.map((x, i) => { const on = ['add', 'fill'].includes(start(x)); return `
+      <div class="card smrow${on ? '' : ' off'}" data-i="${i}"><div class="pad">
+        <label class="smchk"><input type="checkbox" name="use" ${on ? 'checked' : ''}><b class="smact">Add this row</b></label>
+        <div class="f2"><div class="field"><label>Date</label><input type="date" name="date" value="${escH(x.date)}" max="${today()}"></div>
+          <div class="field"><label>Machine</label><select name="no">${opts(x.m)}</select></div></div>
+        <div class="f3"><div class="field"><label>In</label><input name="in" type="number" inputmode="decimal" step="any" value="${x.inR}"></div>
+          <div class="field"><label>Out</label><input name="out" type="number" inputmode="decimal" step="any" value="${x.outR}"></div>
+          <div class="field"><label>Diesel (L)</label><input name="dsl" type="number" inputmode="decimal" step="any" value="${x.diesel}"></div></div>
+        <div class="field" style="margin-bottom:0"><label>Remark</label><input name="rem" value="${escH(x.remark)}"></div>
+        <div class="smflags"></div>
+      </div></div>`; }).join('')}</div>
+    <button class="btn" style="width:100%" data-x="scanAdd">Add ticked rows</button>
+    <button class="btn sec" style="width:100%;margin-top:8px" data-x="scanAgain">Read again more carefully</button>
+    <div class="tiny" style="margin-top:8px">Read by ${escH(r.model || 'AI')}. Always compare with the photo — handwriting can be misread.</div>`, null, null);
+  const box = document.getElementById('smRows');
+  box.addEventListener('input', () => scanFlags());
+  box.addEventListener('change', () => scanFlags());
+  scanFlags();
+}
+function scanRowVals(el) {
+  const q = n => el.querySelector(`[name=${n}]`);
+  const nv = n => { const v = q(n).value.trim(); return v === '' ? '' : num(v); };
+  return { use: q('use').checked, date: q('date').value, no: q('no').value, inR: nv('in'), outR: nv('out'), diesel: nv('dsl'), remark: q('rem').value.trim() };
+}
+/* is this row already in the log? add it, fill the blanks of the saved entry, replace its numbers, or nothing new */
+const SCAN_F = ['inR', 'outR', 'diesel'];
+function scanMatch(s, v) {
+  if (!v.no || !v.date) return { mode: 'add' };
+  const ex = (s.machineLog || []).filter(e => sameNo(e.machineNo, v.no) && e.date === v.date);
+  if (!ex.length) return { mode: 'add' };
+  const look = e => { let conflict = false, adds = false; for (const k of SCAN_F) { if (has(e[k]) && v[k] !== '' && num(e[k]) !== num(v[k])) conflict = true; if (!has(e[k]) && v[k] !== '') adds = true; } if (!has(e.remark) && v.remark) adds = true; return conflict ? 'replace' : adds ? 'fill' : 'same'; };
+  if (ex.length > 1) { const same = ex.find(e => look(e) === 'same'); return same ? { mode: 'same', e: same } : { mode: 'add', many: ex.length }; }
+  return { mode: look(ex[0]), e: ex[0] };
+}
+const SCAN_LABEL = { add: 'Add this row', fill: 'Fill the blanks in the saved entry', replace: "Replace the saved entry's numbers", same: 'Already in the log — nothing new' };
+function scanFlags() {
+  const s = SCAN && SCAN.s; if (!s) return 0;
+  const els = [...document.querySelectorAll('#smRows .smrow')];
+  const prevOut = {};   // within this photo, row by row
+  let bad = 0, n = 0;
+  els.map(el => [el, scanRowVals(el)]).sort((a, b) => (a[1].date || '').localeCompare(b[1].date || '')).forEach(([el, v]) => {
+    el.classList.toggle('off', !v.use);
+    const f = [];
+    const daily = v.no && rateInfo(s, v.no).basis === 'Daily';
+    if (!v.no) f.push(['bad', 'Pick the machine']);
+    if (!v.date) f.push(['bad', 'Date needed']); else if (v.date > today()) f.push(['bad', 'Date is in the future']);
+    if ((v.inR === '') !== (v.outR === '') && !daily) f.push(['bad', v.inR === '' ? 'In reading missing' : 'Out reading missing']);
+    if (v.inR !== '' && v.outR !== '') {
+      const h = v.outR - v.inR;
+      if (h < 0) f.push(['bad', 'Out is lower than In']); else f.push([h > 24 ? 'amb' : 'ok', `${dec(h, 2)} hrs${h > 24 ? ' — more than 24, check' : ''}`]);
+    }
+    if (v.no && v.inR !== '') {
+      const k = machineKeyLocal(v.no), lo = prevOut[k] != null ? { outR: prevOut[k] } : lastOutOf(s, v.no, v.date ? prevDay(v.date) : '');
+      if (lo && Math.abs(num(lo.outR) - v.inR) > 0.05) f.push(['amb', `In is not the last out reading (${fmtN(lo.outR)})`]);
+    }
+    if (v.no && v.outR !== '') prevOut[machineKeyLocal(v.no)] = v.outR;
+    const mt = scanMatch(s, v);
+    el.querySelector('.smact').textContent = SCAN_LABEL[mt.mode];
+    if (mt.e) f.push([mt.mode === 'replace' ? 'amb' : 'ok', `Saved: In ${fmtN(has(mt.e.inR) ? mt.e.inR : '')} · Out ${fmtN(has(mt.e.outR) ? mt.e.outR : '')}${has(mt.e.diesel) ? ' · ' + fmtN(mt.e.diesel) + ' L' : ''}`]);
+    if (mt.many) f.push(['amb', `${mt.many} entries already on this day`]);
+    el.querySelector('.smflags').innerHTML = f.map(([c, t]) => `<span class="${c}">${escH(t)}</span>`).join(' · ');
+    if (v.use) { n++; if (f.some(x => x[0] === 'bad')) bad++; }
+  });
+  const b = document.querySelector('[data-x=scanAdd]'); if (b) b.textContent = n ? `Add ${n} ticked row${n === 1 ? '' : 's'}` : 'Tick the rows to add';
+  return bad;
+}
+const machineKeyLocal = no => String(no).toLowerCase().replace(/[^a-z0-9]/g, '');
+const prevDay = d => { const [y, m, x] = d.split('-').map(Number); const t = new Date(y, m - 1, x - 1); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+function scanAdd() {
+  const s = SCAN && SCAN.s; if (!s) return;
+  const bad = scanFlags();
+  const rows = [...document.querySelectorAll('#smRows .smrow')].map(scanRowVals).filter(v => v.use);
+  if (!rows.length) return say('Tick at least one row');
+  if (bad) { const el = [...document.querySelectorAll('#smRows .smrow')].find(e => e.querySelector('.smflags .bad') && e.querySelector('[name=use]').checked); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); return say('Fix the rows marked in red, or untick them'); }
+  const target = DB.sites.find(x => x.id === s.id) || s;
+  let added = 0, filled = 0, replaced = 0, same = 0;
+  for (const v of rows) {
+    const mt = scanMatch(target, v);
+    if (mt.mode === 'add') { target.machineLog.push({ id: uid(), date: v.date, machineNo: v.no, inR: v.inR, outR: v.outR, diesel: v.diesel, openDiesel: '', remark: v.remark, xl: false }); added++; }
+    else if (mt.mode === 'fill') { for (const k of SCAN_F) if (!has(mt.e[k]) && v[k] !== '') mt.e[k] = v[k]; if (!has(mt.e.remark) && v.remark) mt.e.remark = v.remark; filled++; }
+    else if (mt.mode === 'replace') { for (const k of SCAN_F) if (v[k] !== '') mt.e[k] = v[k]; if (v.remark) mt.e.remark = v.remark; replaced++; }
+    else same++;
+  }
+  closeSheet(); SCAN = null; save(); render();
+  const parts = [added && `${added} added`, filled && `${filled} filled in`, replaced && `${replaced} replaced`, same && `${same} already there`].filter(Boolean);
+  say((parts.join(', ') || 'Nothing to change') + ((added || filled || replaced) && isMgr() ? ' — waiting for approval' : ''));
+}
+
+/* the admin switches photo reading on with a free Google key */
+async function openPhotoAi(lead) {
+  let cfg = null; try { cfg = await aiConfig(CLOUD, true); } catch (e) { }
+  openSheet('Photo reading (AI)', `<div class="card"><div class="pad" style="line-height:1.6">
+    ${lead ? `<p style="margin:0 0 10px"><b>${escH(lead)}</b></p>` : ''}
+    <div class="${cfg ? 'smok' : 'smread'}" style="background:${cfg ? '' : 'rgba(201,138,27,.14)'}">${cfg ? 'Photo reading is <b>on</b> for everyone with a login.' : 'Photo reading is <b>off</b>.'}</div>
+    <p class="tiny">A photo of an hour meter, a log-book page or a bill is read by Google's Gemini model and the numbers are filled in for you to check. It uses a free Google key (no card):</p>
+    <ol class="g-steps" style="color:var(--steel);font-size:14px"><li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with your Google account.</li><li>Tap <b>Create API key</b>, then copy the key.</li><li>Paste it here and tap <b>Save and test</b>.</li></ol>
+    <div class="field"><label>Gemini API key</label><input id="smAiKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${cfg ? 'saved — paste a new one to replace it' : 'AIza…'}"></div>
+    <button class="btn" style="width:100%" data-x="aiSave">Save and test</button>
+    ${cfg ? '<button class="btn dgr sm" style="width:100%;margin-top:8px" data-x="aiOff">Switch photo reading off</button>' : ''}
+    <p class="tiny" style="margin-top:12px">Free tier: a few hundred photos a day. On Google's free tier, Google may keep and review the photos to improve its products, so don't photograph anything private. Photos are not stored in this app.</p>
+  </div></div>`, null, null);
+}
+async function aiSave() {
+  const key = val('smAiKey'); if (!key) return say('Paste the key first');
+  busy(true, 'Testing the key…');
+  try {
+    const model = await testKey(key);
+    await CLOUD.commit([{ type: 'set', path: 'sm_meta/ai', data: { key, models: [model], at: Date.now(), byName: ME.name } }]);
+    aiForget(); closeSheet(); say('Photo reading is on');
+  } catch (e) { say(e.message || 'The key did not work'); } finally { busy(false); }
+}
+async function aiOff() {
+  if (!confirm('Switch photo reading off for everyone?')) return;
+  try { await CLOUD.commit([{ type: 'set', path: 'sm_meta/ai', data: { key: '', models: [], at: Date.now(), byName: ME.name } }]); aiForget(); closeSheet(); say('Photo reading is off'); } catch (e) { say('Could not save: ' + (e.code || e.message)); }
+}
 window.SM_SYNC = { push, afterRender, menuHtml, sideHtml, scopeManagers, can, me: () => ME };
 
 /* ---------- clicks: this layer's buttons, and role guards on the app's own buttons ---------- */
@@ -778,7 +1029,7 @@ document.addEventListener('click', async e => {
   if (x) {
     e.preventDefault(); e.stopPropagation();
     const a = x.dataset.x, v = x.dataset.v;
-    if (x.closest('.sheet') && ['approvals', 'users', 'account'].includes(a)) closeSheet();
+    if (x.closest('.sheet') && ['approvals', 'users', 'account', 'photoAi'].includes(a)) closeSheet();
     switch (a) {
       case 'pill': { const [, , t] = pillState(); if (ERR) { ERR = ''; startListeners(); } say(t); break; }
       case 'approvals': openApprovals(); break;
@@ -805,6 +1056,14 @@ document.addEventListener('click', async e => {
       case 'startBlank': await startApp(); break;
       case 'rules': openRulesSheet(); break;
       case 'rulesCheck': { const ok = await CLOUD.rulesOk(RULES_V); if (ok) { RULES_OLD = false; closeSheet(); say('The new rules are published'); rerender(); } else say(ok === false ? 'Still the old rules. Publish, wait a minute, then check again.' : 'No internet — try again.'); break; }
+      case 'photoAi': openPhotoAi(''); break;
+      case 'aiSave': aiSave(); break;
+      case 'aiOff': aiOff(); break;
+      case 'scanForm': scanForm(v); break;
+      case 'scanLog': scanLog(v); break;
+      case 'scanAgain': if (SCAN) scanLog(SCAN.no, true); break;
+      case 'scanAdd': scanAdd(); break;
+      case 'scanZoom': x.classList.toggle('big'); break;
       case 'importRetry': if (LAST_IMPORT) importBackup(LAST_IMPORT.d, LAST_IMPORT.fileName); else location.reload(); break;
     }
     return;

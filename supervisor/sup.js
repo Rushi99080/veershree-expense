@@ -5,8 +5,9 @@
    marked Pending until the admin approves them.
    ========================================================= */
 import { createCloud, safeId } from '../cloud.js?v=3.1.0';
+import { pickPhoto, toJpeg, readMachinePhoto, readBillPhoto, matchMachine, matchName } from '../ai.js?v=1.0.0';
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const RULES_V = 'v2';
 const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor' };
 const CAN_ENTER = ['supervisor', 'manager', 'admin'];
@@ -307,6 +308,7 @@ function machineSheet(no, entry, keepNew) {
   openSheet(`${esc(m.no)}${m.type ? ' · ' + esc(m.type) : ''}`, `
     <p class="sub">${esc(fmtDay(DATE))}${m.operator ? ' · Operator ' + esc(m.operator) : ''}</p>
     ${entry ? `<p class="who">${entry.data._appr === 'approved' ? '<span class="bdg ok">Approved</span>' : '<span class="bdg pend">Pending</span>'} Entered by ${esc(entry.data._byName || '—')}${ro ? (entry.data._appr === 'approved' ? ' · only the admin can change it now' : ' · only they or the admin can change it') : ''}</p>` : ''}
+    ${ro ? '' : '<button class="btn sec scan" data-a="scanMeter">📷 Read meter or log photo</button><div id="smRead"></div>'}
     <fieldset ${ro ? 'disabled' : ''}>
     <div class="f2">${numIn('In reading' + (daily ? ' <i>optional</i>' : ''), 'f_in', entry ? r.inR : (last && !daily ? last.outR : ''), lastTxt)}${numIn('Out reading' + (daily ? ' <i>optional</i>' : ''), 'f_out', r.outR)}</div>
     <div class="hours"><span>Hours</span><b id="f_hr">—</b></div>
@@ -352,6 +354,7 @@ function dieselSheet(entry) {
   const vendors = [...new Set([...(s.dieselVendors || []), r.vendor].filter(Boolean))];
   openSheet(entry ? 'Diesel received' : 'New diesel received', `<p class="sub">${esc(fmtDay(DATE))}</p>
     ${entry ? `<p class="who">${entry.data._appr === 'approved' ? '<span class="bdg ok">Approved</span>' : '<span class="bdg pend">Pending</span>'} Entered by ${esc(entry.data._byName || '—')}</p>` : ''}
+    ${ro ? '' : '<button class="btn sec scan" data-a="scanBill">📷 Read bill photo</button><div id="smRead"></div>'}
     <fieldset ${ro ? 'disabled' : ''}>
     <label class="field"><span>Diesel vendor</span><select id="f_v">${vendors.length ? '' : '<option value="">— none in the list —</option>'}${vendors.map(v => `<option${v === r.vendor ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
     <div class="f2">${numIn('Diesel (L)', 'f_l', r.litres)}${inp('Bill no', 'f_bill', r.bill)}</div>
@@ -403,6 +406,58 @@ function reportText() {
   return lines.join('\n');
 }
 
+/* ---------- photo reading ---------- */
+function busy(on, msg) {
+  let el = document.getElementById('busy');
+  if (!on) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'busy'; document.body.appendChild(el); }
+  el.innerHTML = `<div><i></i>${esc(msg || 'Reading the photo…')}</div>`;
+}
+function scanErr(e) {
+  if (e && e.message === 'NO_KEY') return toast('Photo reading is not switched on yet. Ask the admin to switch it on in Site Manager (Menu → Photo reading).');
+  toast((e && e.message) || 'Photo reading failed.');
+}
+const setV = (id, v) => { const el = document.getElementById(id); if (!el || v === '' || v == null) return; el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+const readNote = html => { const n = document.getElementById('smRead'); if (n) n.innerHTML = `<div class="read">${html}</div>`; };
+const fmtN = v => (v === '' || v == null) ? '—' : dec(v, 2);
+async function scanMeter() {
+  if (!EDIT || EDIT.coll !== 'machineLog') return;
+  const file = await pickPhoto(); if (!file) return;
+  const s = site(), no = EDIT.no, m = (s.machines || []).find(x => sameNo(x.no, no)) || {};
+  const last = lastFor(no, EDIT.entry && EDIT.entry.path);
+  busy(true);
+  try {
+    const img = await toJpeg(file);
+    const r = await readMachinePhoto(CLOUD, img.b64, { site: s.name, today: today(), machineNo: no, machineType: m.type || '', lastOut: last ? last.outR : '', lastDate: last ? last.date : '', machines: activeMachines(s) });
+    if (r.kind === 'meter' && r.meterReading !== '') {
+      const rd = r.meterReading, inV = vOf('f_in');
+      if (inV !== '' && rd >= num(inV)) { setV('f_out', rd); readNote(`Meter <b>${fmtN(rd)}</b> → Out reading.`); }
+      else if (inV === '' && last && rd >= num(last.outR)) { setV('f_in', last.outR); setV('f_out', rd); readNote(`Meter <b>${fmtN(rd)}</b> → Out. In = last out reading.`); }
+      else if (inV === '') { setV('f_in', rd); readNote(`Meter <b>${fmtN(rd)}</b> → In reading.`); }
+      else { setV('f_out', rd); readNote(`Meter <b>${fmtN(rd)}</b> → Out. <span class="warn">It is lower than the In reading — check.</span>`); }
+    } else {
+      const mine = r.rows.filter(x => !x.machineNo || sameNo(matchMachine(s.machines || [], x.machineNo), no));
+      const row = mine.find(x => x.date === DATE) || (r.rows.length === 1 ? r.rows[0] : null);
+      if (!row) { readNote(r.rows.length ? `This photo has ${r.rows.length} rows, none for ${esc(no)} on ${esc(fmtDate(DATE))}.` : 'No reading found in this photo.'); }
+      else { setV('f_in', row.inR); setV('f_out', row.outR); setV('f_dsl', row.diesel); if (row.remark && !vOf('f_rem')) setV('f_rem', row.remark); readNote(`Read: In ${fmtN(row.inR)} · Out ${fmtN(row.outR)}${row.diesel !== '' ? ' · ' + fmtN(row.diesel) + ' L' : ''}`); }
+    }
+    if (r.note) readNote(($('#smRead .read') ? $('#smRead .read').innerHTML + '<br>' : '') + esc(r.note));
+  } catch (e) { scanErr(e); } finally { busy(false); }
+}
+async function scanBill() {
+  if (!EDIT || EDIT.coll !== 'dieselLog') return;
+  const file = await pickPhoto(); if (!file) return;
+  const s = site(); busy(true);
+  try {
+    const img = await toJpeg(file);
+    const r = await readBillPhoto(CLOUD, img.b64, { kind: 'diesel', vendors: s.dieselVendors || [] });
+    const v = matchName(s.dieselVendors || [], r.vendor);
+    if (v) setV('f_v', v); else if (r.vendor && !vOf('f_rem')) setV('f_rem', 'Vendor on bill: ' + r.vendor);
+    setV('f_l', r.litres); setV('f_amt', r.amount); if (r.billNo) setV('f_bill', r.billNo);
+    readNote(`Read: ${esc(v || r.vendor || 'vendor not read')}${r.vendor && !v ? ' <span class="warn">(not in the vendor list — pick it)</span>' : ''} · ${fmtN(r.litres)} L · ${r.amount !== '' ? money(r.amount) : 'no amount'}${r.billNo ? ' · bill ' + esc(r.billNo) : ''}${r.date && r.date !== DATE ? `<br><span class="warn">The bill date is ${esc(fmtDate(r.date))} — you are filling ${esc(fmtDate(DATE))}.</span>` : ''}${r.note ? '<br>' + esc(r.note) : ''}`);
+  } catch (e) { scanErr(e); } finally { busy(false); }
+}
+
 /* ---------- clicks ---------- */
 document.addEventListener('click', async ev => {
   const el = ev.target.closest('[data-a]'); if (!el) return;
@@ -427,6 +482,8 @@ document.addEventListener('click', async ev => {
     case 'saveMachine': saveMachine(); break;
     case 'dieselAdd': dieselSheet(null); break;
     case 'saveDiesel': saveDiesel(); break;
+    case 'scanMeter': scanMeter(); break;
+    case 'scanBill': scanBill(); break;
     case 'delEntry': if (EDIT && EDIT.entry && confirm('Delete this entry?')) { deleteEntry(EDIT.entry); EDIT = null; closeSheet(); } break;
     case 'report': { const t = reportText(); closeSheet(); window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank'); break; }
     case 'passForm': openSheet('Change password', `<form data-form="pass" novalidate>${fld('Current password', 'old', 'password', 'autocomplete="current-password"')}${fld('New password', 'n1', 'password', 'autocomplete="new-password"')}${fld('New password again', 'n2', 'password', 'autocomplete="new-password"')}<button class="btn" type="submit">Change password</button></form>`); break;

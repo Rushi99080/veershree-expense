@@ -996,6 +996,23 @@ body.sm-gated #app,body.sm-gated .tabbar{visibility:hidden}
 .smchk{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:15px}
 .smpre{white-space:pre-wrap;font-size:13px;background:var(--surface-2);padding:10px;border-radius:10px;margin:8px 0}
 body.sm-viewer .addbtn,body.sm-viewer .newbtn,body.sm-viewer [data-act="quickAdd"]{display:none!important}
+/* photo reading */
+.smscan{margin:0 0 12px}
+.smscan .btn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px}
+.smscan .btn svg{width:20px;height:20px}
+.smscan .tiny{margin-top:6px}
+.smread{background:rgba(46,139,87,.10);border-radius:10px;padding:9px 11px;font-size:13px;line-height:1.5;margin-top:8px}
+.smscanimg{display:block;width:100%;max-height:220px;object-fit:contain;border-radius:10px;background:var(--surface-2);cursor:zoom-in}
+.smscanimg.big{max-height:none;cursor:zoom-out}
+.smrow .smflags{font-size:12px;line-height:1.5;margin-top:4px}
+.smrow .smflags .bad{color:#B3261E;font-weight:700}
+.smrow .smflags .amb{color:#9A5B00;font-weight:600}
+.smrow .smflags .ok{color:var(--steel)}
+.smrow.off{opacity:.55}
+#smBusy{position:fixed;inset:0;z-index:400;background:rgba(8,10,14,.55);display:flex;align-items:center;justify-content:center}
+#smBusy div{background:var(--surface);color:var(--ink);border-radius:16px;padding:18px 22px;font-weight:600;display:flex;align-items:center;gap:12px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+#smBusy i{width:20px;height:20px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--gold);animation:smspin .8s linear infinite}
+@keyframes smspin{to{transform:rotate(360deg)}}
 @media print{#smgate,.smpill{display:none!important}}
 </style>
 </head>
@@ -1224,7 +1241,7 @@ function greeting() {
 }
 
 /* ---------- storage ---------- */
-const APP_VERSION = '3.1 · Phase 1 + Supervisor app';
+const APP_VERSION = '3.2 · Supervisor app + photo reading';
 const MODES = ['Cash', 'Online / UPI', 'RTGS / NEFT', 'Cheque'];
 let KEY = 'vsms2:db';   /* set per login by sync.js */
 
@@ -7004,6 +7021,6 @@ function reportForm(s, kind, machine) {
 
 </script>
 <script src="firebase-config.js?v=3"></script>
-<script type="module" src="sync.js?v=3.1.0"></script>
+<script type="module" src="sync.js?v=3.2.0"></script>
 </body>
 </html>

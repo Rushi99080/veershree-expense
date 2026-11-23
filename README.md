@@ -16,6 +16,7 @@ Supervisor app: https://rushi99080.github.io/veershree-expense/supervisor/
 | `firebase-config.js` | Firebase keys of the `veershree-expense` project |
 | `firestore.rules` | Security rules — paste into Firebase → Firestore Database → Rules → Publish |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Offline use and "Add to Home Screen" |
+| `ai.js` | Photo reading: hour meter, log-book page or bill → numbers (Google Gemini, free key set in Menu → Photo reading) |
 | `supervisor/` | The **Supervisor app** (separate link, own home-screen icon): machine readings and diesel on site |
 
 ## Roles
@@ -29,6 +30,14 @@ Supervisor app: https://rushi99080.github.io/veershree-expense/supervisor/
 | Supervisor | Uses the Supervisor app only: machine in/out readings, diesel filled and diesel received on his sites. Entries wait for approval; sees no money figures |
 
 The online database checks every change against these rules, so a role cannot be bypassed from another copy of the app.
+
+## Photo reading
+
+Machine → Daily log → pick a machine → **Scan … log**: a photo of the log-book page or the hour meter is read and
+shown row by row to check. Rows already in the log are skipped; saved entries with blanks (e.g. only the In reading)
+are filled in, never overwritten without a tick. The New machine / diesel / expense forms and the Supervisor app
+have **Read … photo** buttons that fill the form. Turn it on once in Menu → Photo reading with a free key from
+aistudio.google.com/apikey.
 
 ## Phases
 

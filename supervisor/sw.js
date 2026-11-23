@@ -1,8 +1,8 @@
 /* Offline app shell for the Veershree Supervisor app.
    Its own files and the shared ones one level up (cloud.js, firebase-config.js): network first, phone copy offline.
    Firebase library: phone copy first. Login and database traffic is never touched here. */
-const VERSION = 'vsup-1.0.0';
-const CORE = ['./', 'index.html', 'sup.js?v=1.0.0', '../cloud.js?v=3.1.0', '../firebase-config.js?v=3', 'manifest.webmanifest',
+const VERSION = 'vsup-1.1.0';
+const CORE = ['./', 'index.html', 'sup.js?v=1.1.0', '../cloud.js?v=3.1.0', '../ai.js?v=1.0.0', '../firebase-config.js?v=3', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const SDK = 'https://www.gstatic.com/firebasejs/13.4.0/';
 const LIBS = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];
