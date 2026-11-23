@@ -1,8 +1,9 @@
-/* Offline app shell for the Veershree Plot Expense Manager.
+/* Offline app shell for Veershree Site Manager.
    The app's own files: network first (so updates show up), phone copy when there is no network.
-   Firebase library, fonts and the Excel library: phone copy first (they never change). */
-const VERSION = 'vpem-1.0.2';
-const CORE = ['./', 'index.html', 'styles.css?v=1.0.2', 'app.js?v=1.0.2', 'cloud.js', 'oldcalc.js', 'firebase-config.js?v=1', 'manifest.webmanifest',
+   Firebase library and fonts: phone copy first (they never change).
+   Login and database traffic is never touched here — Firebase keeps its own offline copy. */
+const VERSION = 'vsm-3.0.0';
+const CORE = ['./', 'index.html', 'sync.js?v=3.0.0', 'cloud.js', 'firebase-config.js?v=3', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const SDK = 'https://www.gstatic.com/firebasejs/13.4.0/';
 const LIBS = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];
@@ -17,7 +18,8 @@ self.addEventListener('install', e => {
 });
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== VERSION) await caches.delete(k);
+    /* only this app's old copies (and the retired Plot Expense build at this address) — other apps on the same website are left alone */
+    for (const k of await caches.keys()) if ((k.startsWith('vsm-') || k.startsWith('vpem-')) && k !== VERSION) await caches.delete(k);
     await self.clients.claim();
   })());
 });
@@ -27,13 +29,14 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (PASS.test(url.href) && !url.href.startsWith(SDK)) return; // live database and login traffic is never cached
+  if (PASS.test(url.href) && !url.href.startsWith(SDK)) return;
   const sameOrigin = url.origin === self.location.origin;
   if (sameOrigin) {
+    if (!url.pathname.startsWith(new URL(self.registration.scope).pathname)) return; // other apps on this website: not ours
     e.respondWith((async () => {
       const c = await caches.open(VERSION);
       try {
-        const res = await timeout(4000, fetch(req, { cache: 'no-cache' })); // always check GitHub for a newer copy
+        const res = await timeout(5000, fetch(req, { cache: 'no-cache' }));
         if (res && res.ok) c.put(req, res.clone());
         return res;
       } catch (err) {
@@ -43,7 +46,7 @@ self.addEventListener('fetch', e => {
     })());
     return;
   }
-  if (url.href.startsWith(SDK) || /fonts\.(googleapis|gstatic)\.com|cdnjs\.cloudflare\.com/.test(url.host)) {
+  if (url.href.startsWith(SDK) || /fonts\.(googleapis|gstatic)\.com/.test(url.host)) {
     e.respondWith((async () => {
       const c = await caches.open(VERSION);
       const hit = await c.match(req);

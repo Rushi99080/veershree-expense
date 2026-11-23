@@ -1,5 +1,5 @@
 rules_version = '2';
-// Veershree Plot Expense Manager — security rules (Phase 1)
+// Site Manager (Veershree) — security rules, Phase 1
 // Paste this whole file in Firebase console → Firestore Database → Rules → Publish.
 // Roles: admin (everything), manager (own sites, own cash book, cannot touch approved entries),
 //        accountant (sees everything, marks bills paid, records payments), viewer (read only).
@@ -19,30 +19,19 @@ service cloud.firestore {
     function ownerPath() { return /databases/$(database)/documents/config/owner; }
     function isOwner() { return exists(ownerPath()) && get(ownerPath()).data.uid == request.auth.uid; }
 
-    // every write must carry the server time and the writer's id
-    function stamped() {
-      return request.resource.data._u == request.time && request.resource.data._ub == request.auth.uid;
-    }
-    function newEntry(siteId) {
-      let d = request.resource.data;
-      return stamped() && d._by == request.auth.uid && d.id is string
-        && d._c in ['exp', 'mlog', 'dsl', 'vpay', 'opay', 'bill']
-        && (siteId == '_nosite' || d.site == siteId)
-        && !('_del' in d) && !('_movedTo' in d);
-    }
-    function newFund() {
-      let d = request.resource.data;
-      return stamped() && d._by == request.auth.uid && d.id is string && d._c == 'fund'
-        && !('_del' in d) && !('_movedTo' in d);
-    }
+    // every write carries the server time and the writer's id
+    function stamped() { return request.resource.data._u == request.time && request.resource.data._ub == request.auth.uid; }
     function changedKeys() { return request.resource.data.diff(resource.data).affectedKeys(); }
-    // a manager may edit their own team's entry only while it is not approved, and it stays pending
+    function cleanNew() {
+      let d = request.resource.data;
+      return stamped() && d._by == request.auth.uid && !('_del' in d);
+    }
+    // a manager may change a not-yet-approved entry; it stays pending and keeps who made it
     function managerEdit() {
       let d = request.resource.data;
       return stamped() && resource.data.get('_appr', '') != 'approved' && resource.data.get('_del', false) != true
-        && d._appr == 'pending' && d._by == resource.data._by && d._c == resource.data._c
-        && d.get('site', '') == resource.data.get('site', '') && !('_del' in d)
-        && !changedKeys().hasAny(['_apBy', '_apByName', '_apAt', '_by', '_byName', '_at']);
+        && d._appr == 'pending' && d._by == resource.data._by && d._c == resource.data._c && !('_del' in d)
+        && !changedKeys().hasAny(['_apBy', '_apByName', '_apAt', '_by', '_byName', '_at', '_s', '_i']);
     }
 
     // set once by the first person who opens the app (the owner)
@@ -60,47 +49,53 @@ service cloud.firestore {
       allow create: if isAdmin()
         || (signedIn() && uid == request.auth.uid && isOwner()
             && request.resource.data.role == 'admin' && request.resource.data.active == true);
-      // an admin cannot remove their own admin rights or switch themselves off (prevents lock-out)
+      // an admin cannot remove their own admin rights or switch themselves off
       allow update: if isAdmin() && !(uid == request.auth.uid
         && (request.resource.data.role != 'admin' || request.resource.data.active != true));
       allow delete: if false;
     }
 
-    // sites, people, expense heads, machines and settings: everyone reads, only admin changes
-    match /meta/{docId} {
+    // managers list, delete password, logos: everyone reads, only the admin changes
+    match /sm_meta/{docId} {
       allow read: if active();
       allow create, update: if isAdmin() && stamped();
       allow delete: if false;
     }
 
-    match /sites/{siteId}/entries/{docId} {
-      allow read: if seesAll() || managesSite(siteId)
-        || (isManager() && myPerson() != '' && resource.data.paidBy == myPerson());
-
-      allow create: if (isAdmin() && stamped())
-        || (managesSite(siteId) && newEntry(siteId) && request.resource.data._appr == 'pending')
-        || (isAccountant() && newEntry(siteId) && request.resource.data._c in ['vpay', 'opay']
-            && request.resource.data._appr == 'approved');
-
+    // one site: name, machines, rates, masters, settings
+    match /sm_sites/{siteId} {
+      allow read: if seesAll() || managesSite(siteId);
+      allow create: if isAdmin() && stamped();
       allow update: if (isAdmin() && stamped())
-        || (managesSite(siteId) && managerEdit())
-        // the accountant may only mark an expense or diesel bill as paid / unpaid
-        || (isAccountant() && stamped() && resource.data._c in ['exp', 'dsl'] && resource.data.get('_del', false) != true
-            && changedKeys().hasOnly(['status', 'paidBy', 'mode', '_u', '_ub', '_ubName']));
+        || (managesSite(siteId) && stamped() && !('_del' in request.resource.data) && request.resource.data.id == resource.data.id);
+      allow delete: if false;
 
-      allow delete: if isAdmin();
+      match /entries/{docId} {
+        allow read: if seesAll() || managesSite(siteId);
+        allow create: if (isAdmin() && stamped())
+          || (managesSite(siteId) && cleanNew() && request.resource.data._appr == 'pending' && request.resource.data._s is string)
+          || (isAccountant() && cleanNew() && request.resource.data._appr == 'approved'
+              && request.resource.data._c in ['vendorPayments', 'ownerPayments', 'funds']);
+        allow update: if (isAdmin() && stamped())
+          || (managesSite(siteId) && managerEdit())
+          // the accountant may only mark an expense, diesel or murum bill paid, or record payments on a rent bill
+          || (isAccountant() && stamped() && resource.data.get('_del', false) != true
+              && ((resource.data._c in ['expenseLog', 'dieselLog', 'murumLog'] && changedKeys().hasOnly(['status', 'paidBy', 'mode', '_u', '_ub', '_ubName']))
+               || (resource.data._c == 'bills' && changedKeys().hasOnly(['payments', '_u', '_ub', '_ubName']))));
+        allow delete: if false;
+      }
     }
 
-    match /funds/{docId} {
-      allow read: if seesAll() || (isManager() && myPerson() != '' && resource.data.person == myPerson());
+    // money given to a manager (the manager's cash book)
+    match /sm_mfunds/{docId} {
+      allow read: if seesAll() || (isManager() && myPerson() != '' && resource.data.manager == myPerson());
       allow create: if (isAdmin() && stamped())
-        || (isAccountant() && newFund() && request.resource.data._appr == 'approved')
-        || (isManager() && myPerson() != '' && newFund() && request.resource.data.person == myPerson()
-            && request.resource.data._appr == 'pending');
+        || (isAccountant() && cleanNew() && request.resource.data._appr == 'approved')
+        || (isManager() && myPerson() != '' && cleanNew() && request.resource.data.manager == myPerson() && request.resource.data._appr == 'pending');
       allow update: if (isAdmin() && stamped())
-        || (isManager() && myPerson() != '' && resource.data.get('person', '') == myPerson()
-            && request.resource.data.person == myPerson() && managerEdit());
-      allow delete: if isAdmin();
+        || (isManager() && myPerson() != '' && resource.data.manager == myPerson()
+            && request.resource.data.manager == myPerson() && managerEdit());
+      allow delete: if false;
     }
   }
 }

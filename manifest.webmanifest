@@ -1,12 +1,13 @@
 {
-  "name": "Veershree Plot Expense Manager",
+  "name": "Veershree Site Manager",
   "short_name": "Veershree",
-  "description": "Site expenses, machines, diesel, rent bills and cash book for Veershree plot development sites.",
+  "description": "Site accounts — machine hours, diesel, expenses, vendor payments and machine rent bills. Multi-user, works offline.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#132036",
-  "theme_color": "#132036",
+  "orientation": "portrait",
+  "background_color": "#0E1116",
+  "theme_color": "#0E1116",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },

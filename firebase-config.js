@@ -1,5 +1,5 @@
 /* ============================================================
-   PASTE YOUR FIREBASE CONFIG HERE  (the only file you edit)
+   FIREBASE CONFIG (project: veershree-expense)
 
    Firebase console → ⚙️ Project settings → "Your apps" → Web app →
    copy the values from the "const firebaseConfig = { ... }" block
