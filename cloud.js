@@ -113,6 +113,25 @@ export async function createCloud(config) {
       await settle(jobs);
     },
     waitPending: () => f.waitForPendingWrites(db),
+    /* true: the current rules are published; false: older rules; null: could not tell (offline) */
+    async rulesOk(v) { try { await f.getDocFromServer(ref('sm_rules/' + v)); return true; } catch (e) { return e && e.code === 'permission-denied' ? false : null; } },
+    /* ---- used by the Supervisor app ---- */
+    watchDoc(path, cb, onErr) {
+      return f.onSnapshot(ref(path), { includeMetadataChanges: true }, s => cb(s.exists() ? toPlain(s.data({ serverTimestamps: 'estimate' })) : null, { fromCache: s.metadata.fromCache, pending: s.metadata.hasPendingWrites }), e => onErr && onErr(e));
+    },
+    /* one kind of entry (machineLog / dieselLog) of one site on one date — two equality filters, no extra index needed */
+    watchDay(sk, coll, date, cb, onErr) {
+      const q = f.query(f.collection(db, 'sm_sites', sk, 'entries'), f.where('_c', '==', coll), f.where('date', '==', date));
+      return f.onSnapshot(q, { includeMetadataChanges: true }, snap => cb(snap.docs.map(d => ({ path: d.ref.path, data: toPlain(d.data({ serverTimestamps: 'estimate' })), pending: d.metadata.hasPendingWrites })), { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites }), e => onErr && onErr(e));
+    },
+    watchSites(cb, onErr) {
+      return f.onSnapshot(f.collection(db, 'sm_sites'), snap => cb(snap.docs.map(d => ({ path: d.ref.path, data: toPlain(d.data({ serverTimestamps: 'estimate' })) }))), e => onErr && onErr(e));
+    },
+    async getDay(sk, coll, date) {
+      const q = f.query(f.collection(db, 'sm_sites', sk, 'entries'), f.where('_c', '==', coll), f.where('date', '==', date));
+      let snap; try { snap = await f.getDocs(q); } catch (e) { snap = await f.getDocsFromCache(q); }
+      return snap.docs.map(d => ({ path: d.ref.path, data: toPlain(d.data({ serverTimestamps: 'estimate' })) }));
+    },
     async probeRead(kind, arg) {
       let q;
       if (kind === 'users') q = f.query(f.collection(db, 'users'), f.limit(1));

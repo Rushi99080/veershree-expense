@@ -8,12 +8,13 @@
    - approvals, users, my account, import of the old backup with a check screen
    The app's own screens and calculations are not changed.
    ========================================================= */
-import { createCloud, safeId } from './cloud.js?v=3.0.1';
+import { createCloud, safeId } from './cloud.js?v=3.1.0';
 
 const ENTRY_KEYS = ['machineLog', 'dieselLog', 'expenseLog', 'vendorPayments', 'murumLog', 'funds', 'ownerPayments', 'bills', 'reminders'];
 const LOCAL_KEYS = ['sites', 'mfunds', 'activeId', 'lastSnap', 'lastBackup', 'theme', 'lastNotif', 'lastNotify', 'userName', 'logo', 'billLogo', 'watermark', 'wmOpacity'];
 const KIND_LABEL = { machineLog: 'Machine entry', dieselLog: 'Diesel bill', expenseLog: 'Expense', vendorPayments: 'Vendor payment', murumLog: 'Murum', funds: 'Money received', ownerPayments: 'Owner payment', bills: 'Rent bill', reminders: 'Payment due date', mfund: 'Money to manager' };
-const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer' };
+const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor' };
+const RULES_V = 'v2';   /* the rules version this build needs (firestore.rules → sm_rules/v2) */
 
 const ME = { uid: '', email: '', name: '', role: '', sites: [], person: '', active: false };
 let CLOUD = null, STOP = null, USERS = [], usersUnsub = null, profUnsub = null;
@@ -28,7 +29,9 @@ const $q = s => document.querySelector(s);
 const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const norm = s => String(s == null ? '' : s).trim().toLowerCase();
 const isAdmin = () => ME.role === 'admin', isMgr = () => ME.role === 'manager', isAcc = () => ME.role === 'accountant', isViewer = () => ME.role === 'viewer';
-const seesAll = () => ME.role && !isMgr();
+const seesAll = () => ['admin', 'accountant', 'viewer'].includes(ME.role);
+const usesSites = role => role === 'manager' || role === 'supervisor';
+const appBase = () => location.origin + location.pathname.replace(/[^/]*$/, '');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const say = m => { try { toast(m); } catch (e) { console.log(m); } };
 function canon(v) {
@@ -343,6 +346,7 @@ async function onProfile(p, u) {
   Object.assign(ME, { name: p.name || u.email, email: p.email || u.email, role: p.role, sites: Array.isArray(p.sites) ? p.sites : [], person: p.person || '', active: true });
   if (isAdmin()) watchUsers();
   if (changed) { await IDBX.del('rec:' + ME.uid); location.reload(); return; }
+  if (ME.role === 'supervisor') { gate(`<h2>Supervisor login</h2><p class="g-msg">This login is for the <b>Supervisor app</b> — machine readings and diesel. Open it here:</p><a class="btn" style="display:block;text-align:center;text-decoration:none" href="${appBase()}supervisor/">Open the Supervisor app</a><button class="btn sec" data-x="signOut">Sign out</button>`); return; }
   if (isMgr() && !ME.sites.length) { gateText('No site yet', 'The admin has not given you a site yet. Ask the admin to tick your site in <b>Users</b>.', true); return; }
   if (STOP) return; // already running
   startListeners();
@@ -382,6 +386,22 @@ async function startApp() {
   await window.SM_START();
   setPill();
   if (!STOP) startListeners();
+  if (isAdmin()) checkRules();
+}
+/* the admin is told when Firebase still has older rules than this build needs */
+let RULES_OLD = false;
+async function checkRules() {
+  const ok = await CLOUD.rulesOk(RULES_V);
+  if (ok === false && !RULES_OLD) { RULES_OLD = true; rerender(); }
+  if (ok === true && RULES_OLD) { RULES_OLD = false; rerender(); }
+}
+async function openRulesSheet() {
+  let rules = '';
+  try { const r = await fetch('firestore.rules', { cache: 'no-cache' }); if (r.ok) rules = await r.text(); } catch (e) { }
+  openSheet('Update the Firebase rules', `<div class="card"><div class="pad"><p class="tiny" style="line-height:1.7">This version of the app (with the <b>Supervisor app</b>) needs the new security rules in Firebase. Until then supervisors cannot open their app. Everything else keeps working.</p>
+    <ol class="g-steps"><li>Tap <b>Copy the new rules</b>.</li><li>Open <b>console.firebase.google.com</b> → <b>veershree-expense</b> → <b>Firestore Database</b> → <b>Rules</b>.</li><li>Delete everything in the box, paste, tap <b>Publish</b>.</li><li>Wait one minute and tap <b>Check again</b>.</li></ol>
+    ${rules ? `<button class="btn" style="width:100%" data-x="copy" data-v="${escH(rules)}">Copy the new rules</button>` : `<p class="tiny">Rules file: <a href="${RULES_URL}" target="_blank" rel="noopener">firestore.rules</a> (open, tap Raw, copy all).</p>`}
+    <button class="btn sec" style="width:100%;margin-top:8px" data-x="rulesCheck">Check again</button></div></div>`, null, null);
 }
 function resetAll() {
   STARTED = false; READY = false; REMOTE = new Map(); META = new Map(); CURSORS = {}; FIRST = new Set(); PEND = 0; ERR = '';
@@ -601,12 +621,12 @@ async function approve(paths) {
 function openUsers() {
   if (!isAdmin()) return;
   const list = USERS.slice().sort((a, b) => (b.active !== false) - (a.active !== false) || String(a.name).localeCompare(String(b.name)));
-  const sitesTxt = u => u.role === 'manager' ? ((u.sites || []).map(id => { const s = DB.sites.find(x => x.id === id); return s ? s.name : '?'; }).join(', ') || 'No site') : 'All sites';
+  const sitesTxt = u => usesSites(u.role) ? ((u.sites || []).map(id => { const s = DB.sites.find(x => x.id === id); return s ? s.name : '?'; }).join(', ') || 'No site') : 'All sites';
   openSheet('Users', `<div id="smUsers"><div class="btnrow" style="margin-bottom:10px"><button class="btn" style="flex:1" data-x="userAdd">Add user</button></div>
     <div class="card">${list.map(u => `<div class="row" data-x="userEdit" data-v="${escH(u.uid)}"><div class="main"><div class="ttl">${escH(u.name || '')} ${u.active === false ? '<span class="pill u">switched off</span>' : ''}</div><div class="sub">${escH(ROLE_LABEL[u.role] || u.role)} · ${escH(sitesTxt(u))}${u.person ? ' · cash book: ' + escH(u.person) : ''}<br>${escH(u.email || '')}</div></div></div>`).join('') || '<div class="pad tiny">Loading…</div>'}</div>
     <div class="shead">What each role can do</div><div class="card"><div class="pad tiny" style="line-height:1.7">
     <b>Admin</b> — everything: users, sites, settings, approve, delete, import, backup.<br><b>Site Manager</b> — sees and adds entries only for the sites you tick, and only their own cash book. Their entries wait for your approval; after approval they cannot change them.<br>
-    <b>Accountant</b> — sees everything; marks expenses, diesel and murum as paid, records payments on rent bills, vendor and owner payments, and money received.<br><b>Viewer</b> — partners and owners: can look at everything, cannot change anything.</div></div></div>`, null, null);
+    <b>Accountant</b> — sees everything; marks expenses, diesel and murum as paid, records payments on rent bills, vendor and owner payments, and money received.<br><b>Viewer</b> — partners and owners: can look at everything, cannot change anything.<br><b>Supervisor</b> — uses the separate Supervisor app on site: fills machine readings, diesel filled and diesel received for the sites you tick. Sees nothing else. Entries wait for your approval.</div></div></div>`, null, null);
 }
 function userForm(u) {
   const r = u || { role: 'manager', sites: [], person: '', active: true };
@@ -616,15 +636,15 @@ function userForm(u) {
     ${fld('Name', 'u_name', 'text', `value="${escH(r.name || '')}" placeholder="e.g. Sahil"`)}
     ${fld('Email (login ID)', 'u_email', 'email', `value="${escH(r.email || '')}" ${u ? 'readonly' : ''} autocomplete="off"`)}
     ${u ? '' : fld('Password', 'u_pass', 'text', `value="${genPass()}" autocomplete="off"`)}
-    <div class="field"><label>Role</label><select name="u_role" ${self ? 'disabled' : ''}>${[['manager', 'Site Manager'], ['accountant', 'Accountant'], ['viewer', 'Viewer (partner / owner)'], ['admin', 'Admin']].map(([v, l]) => `<option value="${v}"${r.role === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-    <div class="field"><label>Cash book (manager name)</label><select name="u_person"><option value="">— none —</option>${persons.map(n => `<option${norm(n) === norm(r.person) ? ' selected' : ''}>${escH(n)}</option>`).join('')}</select></div>
-    <div class="field" id="smUSites"><label>Sites this manager works on</label>${DB.sites.map(s => `<label class="smchk"><input type="checkbox" name="site" value="${escH(s.id)}"${(r.sites || []).includes(s.id) ? ' checked' : ''}> ${escH(s.name)}</label>`).join('')}</div>
+    <div class="field"><label>Role</label><select name="u_role" ${self ? 'disabled' : ''}>${[['manager', 'Site Manager'], ['supervisor', 'Supervisor (machine readings app)'], ['accountant', 'Accountant'], ['viewer', 'Viewer (partner / owner)'], ['admin', 'Admin']].map(([v, l]) => `<option value="${v}"${r.role === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="field" id="smUPerson"><label>Cash book (manager name)</label><select name="u_person"><option value="">— none —</option>${persons.map(n => `<option${norm(n) === norm(r.person) ? ' selected' : ''}>${escH(n)}</option>`).join('')}</select></div>
+    <div class="field" id="smUSites"><label>Sites this person works on</label>${DB.sites.map(s => `<label class="smchk"><input type="checkbox" name="site" value="${escH(s.id)}"${(r.sites || []).includes(s.id) ? ' checked' : ''}> ${escH(s.name)}</label>`).join('')}</div>
     ${u && !self ? `<div class="field"><label>Status</label><select name="u_active"><option value="1"${r.active !== false ? ' selected' : ''}>Active</option><option value="0"${r.active === false ? ' selected' : ''}>Switched off</option></select></div>` : ''}
     <button class="btn" data-x="userSave">${u ? 'Save' : 'Create login'}</button>
     ${u ? `<button class="btn sec sm" style="margin-top:8px;width:100%" data-x="resetPass" data-v="${escH(r.email)}">Send password reset email</button>` : '<p class="tiny" style="margin-top:8px">After saving, send the email and password to the person on WhatsApp.</p>'}
     ${self ? '<p class="tiny">You cannot change your own role or switch yourself off.</p>' : ''}</div></div></div>`, null, null);
-  const roleSel = document.querySelector('[name=u_role]'), sitesBox = $q('#smUSites');
-  const upd = () => { sitesBox.hidden = roleSel.value !== 'manager'; };
+  const roleSel = document.querySelector('[name=u_role]'), sitesBox = $q('#smUSites'), personBox = $q('#smUPerson');
+  const upd = () => { sitesBox.hidden = !usesSites(roleSel.value); personBox.hidden = roleSel.value === 'supervisor'; };
   roleSel.addEventListener('change', upd); upd();
 }
 const genPass = () => ['plot', 'site', 'gold', 'road', 'murum', 'jcb', 'waki', 'vista'][Math.floor(Math.random() * 8)] + '-' + Math.floor(1000 + Math.random() * 9000);
@@ -633,22 +653,23 @@ async function userSave() {
   const q = n => box.querySelector(`[name=${n}]`);
   const id = box.dataset.uid, self = id === ME.uid;
   const name = q('u_name').value.trim(), email = q('u_email').value.trim().toLowerCase();
-  const role = self ? 'admin' : q('u_role').value, person = q('u_person').value;
-  const sites = role === 'manager' ? [...box.querySelectorAll('[name=site]:checked')].map(x => x.value) : [];
+  const role = self ? 'admin' : q('u_role').value, person = role === 'supervisor' ? '' : q('u_person').value;
+  const sites = usesSites(role) ? [...box.querySelectorAll('[name=site]:checked')].map(x => x.value) : [];
   if (!name) return say('Enter the name');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return say('Enter a valid email');
-  if (role === 'manager' && !sites.length) return say('Tick at least one site');
+  if (usesSites(role) && !sites.length) return say('Tick at least one site');
   if (role === 'manager' && !person) return say('Choose whose cash book this manager sees');
   const data = { name, email, role, sites, person, active: self ? true : (q('u_active') ? q('u_active').value === '1' : true) };
   try {
     let uid = id;
-    if (!uid) { const pass = q('u_pass').value; if (pass.length < 6) return say('Password must be at least 6 characters'); say('Creating login…'); uid = await CLOUD.createUser(email, pass); data.createdAt = Date.now(); data.createdBy = ME.uid; await CLOUD.saveUser(uid, data); shareLogin(name, email, pass); return; }
+    if (!uid) { const pass = q('u_pass').value; if (pass.length < 6) return say('Password must be at least 6 characters'); say('Creating login…'); uid = await CLOUD.createUser(email, pass); data.createdAt = Date.now(); data.createdBy = ME.uid; await CLOUD.saveUser(uid, data); shareLogin(name, email, pass, role); return; }
     await CLOUD.saveUser(uid, data); say('User saved'); openUsers();
   } catch (e) { say(authMsg(e)); }
 }
-function shareLogin(name, email, pass) {
-  const url = location.origin + location.pathname;
-  const text = `*Site Manager — Veershree*\nHi ${name}, here is your login.\nOpen: ${url}\nEmail: ${email}\nPassword: ${pass}\nOn iPhone: open the link in Safari → Share → Add to Home Screen.`;
+function shareLogin(name, email, pass, role) {
+  const sup = role === 'supervisor';
+  const url = appBase() + (sup ? 'supervisor/' : '');
+  const text = `*${sup ? 'Supervisor' : 'Site Manager'} — Veershree*\nHi ${name}, here is your login.\nOpen: ${url}\nEmail: ${email}\nPassword: ${pass}\nOn iPhone: open the link in Safari → Share → Add to Home Screen. On Android: open in Chrome → ⋮ → Add to Home screen.`;
   openSheet('Login created', `<div class="card"><div class="pad"><p class="tiny">Send these details to <b>${escH(name)}</b>:</p><pre class="smpre">${escH(text)}</pre>
     <a class="btn" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">Send on WhatsApp</a>
     <button class="btn sec sm" style="width:100%;margin-top:8px" data-x="copy" data-v="${escH(text)}">Copy</button></div></div>`, null, null);
@@ -657,7 +678,7 @@ function shareLogin(name, email, pass) {
 /* ---------- my account ---------- */
 function openAccount() {
   const [, st, title] = pillState();
-  const sitesTxt = isMgr() ? ME.sites.map(id => { const s = DB.sites.find(x => x.id === id); return s ? s.name : '?'; }).join(', ') : 'All sites';
+  const sitesTxt = usesSites(ME.role) ? ME.sites.map(id => { const s = DB.sites.find(x => x.id === id); return s ? s.name : '?'; }).join(', ') : 'All sites';
   openSheet('My account', `<div class="card"><div class="pad tiny" style="line-height:1.8"><b style="font-size:16px">${escH(ME.name)}</b> · ${escH(ROLE_LABEL[ME.role] || '')}<br>${escH(ME.email)}<br>Sites: ${escH(sitesTxt)}${ME.person ? '<br>Cash book: ' + escH(ME.person) : ''}</div></div>
     <div class="card"><h3>Data on this phone<small>${escH(st)}</small></h3><div class="pad tiny" style="line-height:1.7">${escH(title)}<br>Entries on this phone: ${(DB.sites || []).reduce((a, s) => a + ENTRY_KEYS.reduce((b, k) => b + (s[k] || []).length, 0), 0).toLocaleString('en-IN')}
       <div class="btnrow" style="margin-top:8px"><button class="btn sec sm" style="flex:1" data-x="resync">Download everything again</button></div></div></div>
@@ -728,6 +749,10 @@ function sideHtml() {
     <button data-x="account">${ICON.person || ''}<span>${escH(ME.name)} · ${escH(ROLE_LABEL[ME.role] || '')}</span></button></div>`;
 }
 function afterRender() {
+  if (RULES_OLD && isAdmin() && TAB === 'dash' && !$q('#smRulesCard')) {
+    const main = $q('#app main');
+    if (main) main.insertAdjacentHTML('afterbegin', `<div class="card mlist" id="smRulesCard"><div class="row" data-x="rules">${ava('', 'gear', 'c2')}<div class="main"><div class="ttl">Update the Firebase rules</div><div class="sub">Needed for the Supervisor app · tap to see how</div></div>${ic('chevR', 'chev')}</div></div>`);
+  }
   const top = $q('.topbar');
   if (top && !top.querySelector('.smpill')) { const b = document.createElement('button'); b.className = 'smpill'; b.dataset.x = 'pill'; const sp = top.querySelector('.sitepick'); if (sp) sp.after(b); else top.prepend(b); }
   setPill();
@@ -778,6 +803,8 @@ document.addEventListener('click', async e => {
       case 'back': gateLogin('', await CLOUD.ownerClaimed()); break;
       case 'pickBackup': pickFile((f, txt) => { const d = parseBackup(f, txt); if (d) importBackup(d, f.name); }); break;
       case 'startBlank': await startApp(); break;
+      case 'rules': openRulesSheet(); break;
+      case 'rulesCheck': { const ok = await CLOUD.rulesOk(RULES_V); if (ok) { RULES_OLD = false; closeSheet(); say('The new rules are published'); rerender(); } else say(ok === false ? 'Still the old rules. Publish, wait a minute, then check again.' : 'No internet — try again.'); break; }
       case 'importRetry': if (LAST_IMPORT) importBackup(LAST_IMPORT.d, LAST_IMPORT.fileName); else location.reload(); break;
     }
     return;

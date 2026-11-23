@@ -4,6 +4,7 @@ The Site Manager app (machine hours, diesel, expenses, murum, vendor payments, m
 upgraded to work for a whole team: logins, roles, approvals and online sync through Firebase. Works offline on site.
 
 Live app: https://rushi99080.github.io/veershree-expense/
+Supervisor app: https://rushi99080.github.io/veershree-expense/supervisor/
 
 ## Files
 
@@ -15,6 +16,7 @@ Live app: https://rushi99080.github.io/veershree-expense/
 | `firebase-config.js` | Firebase keys of the `veershree-expense` project |
 | `firestore.rules` | Security rules — paste into Firebase → Firestore Database → Rules → Publish |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Offline use and "Add to Home Screen" |
+| `supervisor/` | The **Supervisor app** (separate link, own home-screen icon): machine readings and diesel on site |
 
 ## Roles
 
@@ -24,6 +26,7 @@ Live app: https://rushi99080.github.io/veershree-expense/
 | Site Manager | Only the sites given to him. Adds entries (they wait for approval). Sees only his own cash book. Cannot change approved entries |
 | Accountant | Sees everything. Marks expense / diesel / murum bills paid, records payments |
 | Viewer | Sees everything, changes nothing |
+| Supervisor | Uses the Supervisor app only: machine in/out readings, diesel filled and diesel received on his sites. Entries wait for approval; sees no money figures |
 
 The online database checks every change against these rules, so a role cannot be bypassed from another copy of the app.
 

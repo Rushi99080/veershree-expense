@@ -1,8 +1,9 @@
 rules_version = '2';
-// Site Manager (Veershree) — security rules, Phase 1
+// Site Manager (Veershree) — security rules, version 2 (adds the Supervisor app)
 // Paste this whole file in Firebase console → Firestore Database → Rules → Publish.
 // Roles: admin (everything), manager (own sites, own cash book, cannot touch approved entries),
-//        accountant (sees everything, marks bills paid, records payments), viewer (read only).
+//        accountant (sees everything, marks bills paid, records payments), viewer (read only),
+//        supervisor (Supervisor app: machine readings and diesel received on own sites, waiting for approval).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -16,6 +17,8 @@ service cloud.firestore {
     function seesAll() { return active() && me().role in ['admin', 'accountant', 'viewer']; }
     function myPerson() { return me().get('person', ''); }
     function managesSite(siteId) { return isManager() && siteId in me().get('sites', []); }
+    function isSupervisor() { return active() && me().role == 'supervisor'; }
+    function supervisesSite(siteId) { return isSupervisor() && siteId in me().get('sites', []); }
     function ownerPath() { return /databases/$(database)/documents/config/owner; }
     function isOwner() { return exists(ownerPath()) && get(ownerPath()).data.uid == request.auth.uid; }
 
@@ -32,6 +35,21 @@ service cloud.firestore {
       return stamped() && resource.data.get('_appr', '') != 'approved' && resource.data.get('_del', false) != true
         && d._appr == 'pending' && d._by == resource.data._by && d._c == resource.data._c && !('_del' in d)
         && !changedKeys().hasAny(['_apBy', '_apByName', '_apAt', '_by', '_byName', '_at', '_s', '_i']);
+    }
+
+    // a supervisor may change or remove (soft) only his own entries, and only until they are approved
+    function supervisorEdit() {
+      let d = request.resource.data;
+      return stamped() && resource.data._by == request.auth.uid
+        && resource.data.get('_appr', '') != 'approved' && resource.data.get('_del', false) != true
+        && d._appr == 'pending' && d._by == resource.data._by && d._c == resource.data._c
+        && (!('_del' in d) || d._del == true)
+        && !changedKeys().hasAny(['_apBy', '_apByName', '_apAt', '_by', '_byName', '_at', '_s', '_i']);
+    }
+
+    // the apps check this document to know these rules are published (version 2)
+    match /sm_rules/v2 {
+      allow get: if signedIn();
     }
 
     // set once by the first person who opens the app (the owner)
@@ -64,20 +82,24 @@ service cloud.firestore {
 
     // one site: name, machines, rates, masters, settings
     match /sm_sites/{siteId} {
-      allow read: if seesAll() || managesSite(siteId);
+      allow read: if seesAll() || managesSite(siteId) || supervisesSite(siteId);
       allow create: if isAdmin() && stamped();
       allow update: if (isAdmin() && stamped())
         || (managesSite(siteId) && stamped() && !('_del' in request.resource.data) && request.resource.data.id == resource.data.id);
       allow delete: if false;
 
       match /entries/{docId} {
-        allow read: if seesAll() || managesSite(siteId);
+        allow read: if seesAll() || managesSite(siteId)
+          || (supervisesSite(siteId) && resource.data._c in ['machineLog', 'dieselLog']);
         allow create: if (isAdmin() && stamped())
+          || (supervisesSite(siteId) && cleanNew() && request.resource.data._appr == 'pending' && request.resource.data._s is string
+              && request.resource.data._c in ['machineLog', 'dieselLog'])
           || (managesSite(siteId) && cleanNew() && request.resource.data._appr == 'pending' && request.resource.data._s is string)
           || (isAccountant() && cleanNew() && request.resource.data._appr == 'approved'
               && request.resource.data._c in ['vendorPayments', 'ownerPayments', 'funds']);
         allow update: if (isAdmin() && stamped())
           || (managesSite(siteId) && managerEdit())
+          || (supervisesSite(siteId) && supervisorEdit())
           // the accountant may only mark an expense, diesel or murum bill paid, or record payments on a rent bill
           || (isAccountant() && stamped() && resource.data.get('_del', false) != true
               && ((resource.data._c in ['expenseLog', 'dieselLog', 'murumLog'] && changedKeys().hasOnly(['status', 'paidBy', 'mode', '_u', '_ub', '_ubName']))
