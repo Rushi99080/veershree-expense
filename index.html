@@ -329,6 +329,27 @@ button.pendbar:active{background:rgba(255,255,255,.1)}
 
 /* ---------- quick actions (dashboard) ---------- */
 .qrow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:4px 0 6px}
+.qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:4px 0 14px}
+.qtile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:96px;padding:12px 6px;border:1px solid var(--line);border-radius:18px;background:var(--surface);box-shadow:var(--shadow-1,0 1px 2px rgba(0,0,0,.05));font-size:13.5px;font-weight:700;color:var(--ink);text-align:center;line-height:1.25;cursor:pointer}
+.qtile:active{transform:scale(.97)}
+.qtile .ava{width:46px;height:46px;border-radius:15px}
+.qtile .ava svg{width:24px;height:24px}
+@media (min-width:900px){.qgrid{grid-template-columns:repeat(6,1fr)}}
+.mbar{height:6px;border-radius:9px;background:var(--line);margin-top:7px;overflow:hidden;max-width:220px}
+.mbar i{display:block;height:100%;border-radius:9px;background:var(--paid)}
+.mbcard{margin:4px 0 12px}
+.mbhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.mbhead span{font-size:12px;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:.05em}
+.mblog{font-size:13px;line-height:1.6;color:var(--ink-2)}
+.mblog .amb{color:#9A5B00;font-weight:600}
+.mbsplit{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:2px}
+.mbsplit div{background:var(--surface-2);border-radius:12px;padding:9px 11px}
+.mbsplit span{display:block;font-size:11.5px;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:.04em}
+.mbsplit b{font-size:17px}
+.mbsplit small{font-size:12px;color:var(--steel);font-weight:600}
+input.bigin{font-size:22px!important;font-weight:800;height:56px}
+.mbmore{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:0 0 8px}
+.mbmore summary{font-weight:700;font-size:14px;color:var(--steel);cursor:pointer}
 .qbtn{display:flex;flex-direction:column;align-items:center;gap:7px;background:none;border:0;padding:4px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);min-width:0}
 .qbtn .qi{
   width:56px;height:56px;border-radius:18px;display:grid;place-items:center;
@@ -1241,7 +1262,7 @@ function greeting() {
 }
 
 /* ---------- storage ---------- */
-const APP_VERSION = '3.2 · Supervisor app + photo reading';
+const APP_VERSION = '3.3 · Machine billing by hand';
 const MODES = ['Cash', 'Online / UPI', 'RTGS / NEFT', 'Cheque'];
 let KEY = 'vsms2:db';   /* set per login by sync.js */
 
@@ -1580,14 +1601,73 @@ function rateInfo(s, no) {
   return { basis: rm.basis, unit: rate / units, rate, units };
 }
 
-/* rent per machine. Daily basis = entry count, Hourly = sum of hours */
+/* a machine's hours and diesel from the log, and what it was billed (rent is typed in by hand on each bill —
+   no rates are used anywhere). rent = bill amounts, ownerShare = after the commission account's share */
 function machineRent(s, no, from, to) {
-  const ri = rateInfo(s, no);
-  const logs = s.machineLog.filter(r => r.machineNo === no && inRange(r.date, from, to));
+  const cyc = billCycle(s, no);
+  const logs = s.machineLog.filter(r => sameNo(r.machineNo, no) && inRange(r.date, from, to));
   const hrs = logs.reduce((a, r) => a + hoursOf(r), 0);
   const diesel = logs.reduce((a, r) => a + num(r.diesel), 0);
-  const qty = ri.basis === 'Daily' ? logs.length : hrs;
-  return { ...ri, entries: logs.length, hours: hrs, diesel, qty, rent: ri.unit * qty };
+  let billed = 0, owner = 0, bills = 0;
+  for (const b of (s.bills || [])) {
+    if (!inRange(b.to || b.date, from, to)) continue;
+    for (const pt of billParts(b)) if (sameNo(pt.no, no)) { billed += pt.amount; owner += pt.owner; bills++; }
+  }
+  return { basis: cyc.k === 'm' ? 'Daily' : 'Hourly', unit: 0, rate: 0, units: cyc.units, entries: logs.length, hours: hrs, diesel,
+    qty: cyc.k === 'm' ? logs.length : hrs, rent: billed, ownerShare: owner, bills };
+}
+/* how a machine type is billed: every 240 hours (hour-based types) or every month (day-based types like Hiwa) */
+function billCycle(s, no) {
+  const m = machineOf(s, no), rm = m && (s.rateMaster || []).find(r => r.type === m.type);
+  if (rm && rm.basis === 'Daily') return { k: 'm', label: 'month', units: 1 };
+  const u = (rm && num(rm.packageUnits)) || 240;
+  return { k: 'h', label: dec(u, 0) + ' hours', units: u };
+}
+const billNoOfItem = it => String((it && (it.machineNo || it.desc)) || '').replace(/\s*\(.*$/, '').trim();
+/* the machine of a one-machine bill */
+function billMachineNo(b) {
+  if (b.machineNo) return b.machineNo;
+  const it = b.items || [];
+  return it.length === 1 ? billNoOfItem(it[0]) : '';
+}
+/* what each machine was billed on a bill (an older bill with several machines is split by its lines) */
+function billParts(b) {
+  const tot = billTotal(b), own = billOwner(b), items = b.items || [];
+  if (b.machineNo || items.length <= 1) return [{ no: billMachineNo(b), amount: tot, owner: own }];
+  return items.map(it => ({ no: billNoOfItem(it), amount: num(it.amount), owner: tot ? num(it.amount) * own / tot : 0 }));
+}
+const machineBillsOf = (s, no) => (s.bills || []).filter(b => billParts(b).some(pt => sameNo(pt.no, no)));
+function machineLogStats(s, no, from, to) {
+  const logs = s.machineLog.filter(r => sameNo(r.machineNo, no) && inRange(r.date, from, to));
+  return { entries: logs.length, days: new Set(logs.map(r => r.date)).size,
+    hours: logs.reduce((a, r) => a + hoursOf(r), 0), diesel: logs.reduce((a, r) => a + num(r.diesel), 0) };
+}
+const addMonthsTo = (d, n) => { const t = new Date(String(d) + 'T12:00:00'); t.setMonth(t.getMonth() + n); return t.toISOString().slice(0, 10); };
+const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5);
+/* the next bill of a machine: from the day after its last bill, until its 240 hours are done (or one month) */
+function nextBillPeriod(s, no, exceptId) {
+  const cyc = billCycle(s, no);
+  const last = machineBillsOf(s, no).filter(b => b.id !== exceptId && b.to).map(b => b.to).sort().pop() || '';
+  const logs = s.machineLog.filter(r => sameNo(r.machineNo, no) && r.date && (!last || r.date > last))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const from = last ? shiftDay(last, 1) : (logs[0] ? logs[0].date : today());
+  if (cyc.k === 'm') {
+    const to = shiftDay(addMonthsTo(from, 1), -1);
+    const days = new Set(logs.filter(r => r.date <= to).map(r => r.date)).size;
+    const span = Math.max(1, daysBetween(from, to) + 1), gone = Math.max(0, Math.min(span, daysBetween(from, today()) + 1));
+    return { cyc, last, from, to, ready: today() > to, days, hours: 0, pct: gone / span, active: days > 0 };
+  }
+  let acc = 0, to = '';
+  for (const r of logs) { acc += hoursOf(r); if (acc >= cyc.units - 0.001) { to = r.date; break; } }
+  const hours = to ? acc : logs.reduce((a, r) => a + hoursOf(r), 0);
+  return { cyc, last, from, to: to || (logs.length ? logs[logs.length - 1].date : from), ready: !!to, hours,
+    days: new Set(logs.filter(r => !to || r.date <= to).map(r => r.date)).size, pct: Math.min(1, hours / cyc.units), active: hours > 0 };
+}
+/* every working machine with work since its last bill — ready ones first */
+function machinesToBill(s) {
+  const order = new Map(s.machines.map((m, i) => [m.no, i]));
+  return activeMachines(s).map(m => ({ m, p: nextBillPeriod(s, m.no) })).filter(x => x.p.active)
+    .sort((a, b) => (b.p.ready - a.p.ready) || (a.p.ready ? 0 : b.p.pct - a.p.pct) || (order.get(a.m.no) - order.get(b.m.no)));
 }
 
 function inRange(d, from, to) {
@@ -1957,10 +2037,15 @@ async function notifyDue(s) {
 function ownerList(s) { return [...new Set(s.machines.map(m => m.owner).filter(Boolean))].sort(); }
 function ownerStats(s, owner, from, to) {
   const ms = s.machines.filter(m => m.owner === owner);
-  const rent = ms.reduce((a, m) => a + machineRent(s, m.no, from, to).rent, 0);
+  const rent = ms.reduce((a, m) => a + machineRent(s, m.no, from, to).ownerShare, 0);
   const paid = (s.ownerPayments || []).filter(p => p.owner === owner && inRange(p.date, from, to))
-    .reduce((a, p) => a + num(p.amount), 0);
+    .reduce((a, p) => a + num(p.amount), 0) + ownerBillPaid(s, owner, from, to);
   return { machines: ms, rent, paid, balance: rent - paid };
+}
+/* payments to an owner recorded on his machine bills */
+function ownerBillPaid(s, owner, from, to) {
+  return (s.bills || []).filter(b => b.owner === owner).reduce((a, b) => a + (b.payments || [])
+    .filter(p => inRange(p.date, from, to)).reduce((c, p) => c + num(p.amount), 0), 0);
 }
 
 /* owner bill: rent for the period, payments in it, and the earlier balance */
@@ -1969,18 +2054,18 @@ function ownerBillData(s, owner, from, to) {
   const lines = ms.map(m => {
     const r = machineRent(s, m.no, from, to);
     return { m, r };
-  }).filter(x => x.r.entries || x.r.rent);
-  const rent = lines.reduce((a, x) => a + x.r.rent, 0);
+  }).filter(x => x.r.entries || x.r.ownerShare);
+  const rent = lines.reduce((a, x) => a + x.r.ownerShare, 0);
   const pays = (s.ownerPayments || []).filter(p => p.owner === owner && inRange(p.date, from, to))
     .slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const paid = pays.reduce((a, p) => a + num(p.amount), 0);
+  const paid = pays.reduce((a, p) => a + num(p.amount), 0) + ownerBillPaid(s, owner, from, to);
   /* the position before this period */
   let prevRent = 0, prevPaid = 0;
   if (from) {
     const before = shiftDay(from, -1);
-    prevRent = ms.reduce((a, m) => a + machineRent(s, m.no, '', before).rent, 0);
+    prevRent = ms.reduce((a, m) => a + machineRent(s, m.no, '', before).ownerShare, 0);
     prevPaid = (s.ownerPayments || []).filter(p => p.owner === owner && p.date && p.date <= before)
-      .reduce((a, p) => a + num(p.amount), 0);
+      .reduce((a, p) => a + num(p.amount), 0) + ownerBillPaid(s, owner, '', before);
   }
   const opening = prevRent - prevPaid;
   return { owner, from, to, lines, rent, pays, paid, opening, payable: opening + rent - paid };
@@ -2180,7 +2265,7 @@ function byDay(rows, rowHtml, total, fmt, sumRows) {
 
 function subsFor(s, t) {
   const m = s.mods || {};
-  if (t === 'machine') return [['log', 'Daily log'], ['sum', 'Summary'], ['bill', 'Billing'], ['rent', 'Rent']]
+  if (t === 'machine') return [['log', 'Daily log'], ['bill', 'Billing'], ['sum', 'Summary']]
     .concat(m.owner ? [['owner', 'Owner']] : [])
     .concat([['mast', 'Machines']]);
   if (t === 'diesel') return [['log', 'Purchases'], ['sum', 'Summary']].concat(m.stock ? [['stock', 'Stock']] : []);
@@ -2188,7 +2273,7 @@ function subsFor(s, t) {
   return SUBS[t];
 }
 const SUBS = {
-  machine: [['log', 'Daily log'], ['sum', 'Summary'], ['bill', 'Billing'], ['rent', 'Rent'], ['mast', 'Machines']],
+  machine: [['log', 'Daily log'], ['bill', 'Billing'], ['sum', 'Summary'], ['mast', 'Machines']],
   diesel: [['log', 'Purchases'], ['sum', 'Summary'], ['stock', 'Stock']],
   expense: [['log', 'Entries'], ['sum', 'Summary']],
   vendor: [['pend', 'Pending'], ['due', 'Due dates'], ['pay', 'Payments'], ['sum', 'Summary']],
@@ -2409,7 +2494,6 @@ function unpaidBillsCard(s) {
 VIEW.dash = s => {
   const t = totals(s);
   const fin = t.fin;
-  const rentRows = s.machines.map(m => ({ m, r: machineRent(s, m.no) })).filter(x => x.r.entries > 0).sort((a, b) => b.r.rent - a.r.rent);
   const people = s.people.map(p => ({ p, ps: personStats(s, p) }));
 
   /* ---- hero: the total, what it is made of, and what is still unpaid ---- */
@@ -2436,14 +2520,28 @@ VIEW.dash = s => {
 
   /* ---- quick actions ---- */
   const qa = [
-    ['eAdd', 'Expense', 'expense'],
-    s.mods.machine !== false ? ['mlAdd', 'Machine', 'machine'] : null,
-    s.mods.diesel !== false ? ['dAdd', 'Diesel', 'diesel'] : null,
-    s.mods.vendor !== false ? ['vpAdd', 'Pay vendor', 'pay'] : null,
-    ['dayReg', 'Daily report', 'report'],
-    ['share', 'Share', 'share']
-  ].filter(Boolean).slice(0, 4);
-  const quick = `<div class="qrow">${qa.map(([a, l, icn]) => `<button class="qbtn" data-act="${a}"><span class="qi">${ICON[icn]}</span><span>${l}</span></button>`).join('')}</div>`;
+    ['eAdd', 'Expense', 'expense', 'c0'],
+    s.mods.machine !== false ? ['mlAdd', 'Machine reading', 'machine', 'c2'] : null,
+    s.mods.diesel !== false ? ['dAdd', 'Diesel bill', 'diesel', 'c7'] : null,
+    s.mods.vendor !== false ? ['vpAdd', 'Pay vendor', 'pay', 'c3'] : null,
+    s.mods.machine !== false ? ['blAdd', 'Machine bill', 'bill', 'c5'] : null,
+    s.mods.murum ? ['muAdd', 'Murum', 'murum', 'c4'] : null,
+    ['dayReg', 'Daily report', 'report', 'c6']
+  ].filter(Boolean).slice(0, 6);
+  const quick = `<div class="qgrid">${qa.map(([a, l, icn, c]) => `<button class="qtile" data-act="${a}">${ava('', icn, c)}<span>${l}</span></button>`).join('')}</div>`;
+
+  /* ---- what needs doing: one line each ---- */
+  const todoCard = (() => {
+    const lines = [];
+    if (s.mods.machine !== false) {
+      const ub = (s.bills || []).filter(b => billStatus(b) !== 'Paid');
+      const tb = machinesToBill(s).filter(x => x.p.ready);
+      if (tb.length) lines.push(`<div class="row" data-act="sub" data-t="machine" data-v="bill">${ava('', 'machine', 'c3')}<div class="main"><div class="ttl">${tb.length} machine${tb.length === 1 ? '' : 's'} ready to bill</div><div class="sub">${tb.slice(0, 4).map(x => esc(x.m.no)).join(', ')}${tb.length > 4 ? '&hellip;' : ''} &middot; 240 hours or a month done</div></div>${ic('chevR', 'chev')}</div>`);
+      if (ub.length) lines.push(`<div class="row" data-act="sub" data-t="machine" data-v="bill">${ava('', 'bill', 'c4')}<div class="main"><div class="ttl">${ub.length} machine bill${ub.length === 1 ? '' : 's'} not fully paid</div><div class="sub">Pending to owners ${money(t.rentDue)}</div></div>${ic('chevR', 'chev')}</div>`);
+    }
+    if (!lines.length) return '';
+    return `<div class="card mlist"><h3>To do</h3>${lines.join('')}</div>`;
+  })();
 
   /* ---- payment due soon ---- */
   const dueCard = (() => {
@@ -2520,8 +2618,8 @@ VIEW.dash = s => {
   return `
   ${hero}
   ${quick}
+  ${todoCard}
   ${dueCard}
-  ${s.mods.machine !== false ? unpaidBillsCard(s) : ''}
   <div class="dgrid">
   ${recentCard}
   ${chartCard}
@@ -2538,7 +2636,7 @@ VIEW.dash = s => {
       </tbody>
       <tfoot><tr><td>NET</td><td class="n">${money0(t.expTotal + t.muTotal + t.dsTotal + t.rentBilled)}</td><td class="n">${money0(t.expPaidFinal + t.muPaidFinal + t.dsPaidFinal + t.rentIn)}</td><td class="n">${money0(t.netPending)}</td></tr></tfoot>
     </table></div>
-    <div class="pad tiny">Vendor payments (${money(t.vendorPaid)}) are already counted inside each head above.${s.mods.machine !== false ? ' Machine bills: paid bills are in Machine rent, unpaid bills are in Net pending.' + (t.rentComm > 0.5 ? ' Commission ' + money(t.rentComm) + ' is in the ' + esc(pendingParty(s)) + ' account.' : '') : ''}</div>
+    <div class="pad tiny">Vendor payments (${money(t.vendorPaid)}) are already counted inside each head above.${s.mods.machine !== false ? ' Machine bills: paid bills are in Machine rent, unpaid bills are in Net pending.' + (t.rentComm > 0.5 ? ' ' + esc(pendingParty(s)) + ' share ' + money(t.rentComm) + '.' : '') : ''}</div>
   </div>
 
   ${s.mods.machine !== false ? commCard(s, true) : ''}
@@ -2551,20 +2649,6 @@ VIEW.dash = s => {
       <tfoot><tr><td>TOTAL</td>${s.mods.funds ? `<td class="n">${money0(people.reduce((a, x) => a + (x.ps.getsAdvance ? x.ps.received : 0), 0))}</td>` : ''}<td class="n">${money0(people.reduce((a, x) => a + x.ps.site + x.ps.mu, 0))}</td><td class="n">${money0(people.reduce((a, x) => a + x.ps.dsl, 0))}</td><td class="n">${money0(people.reduce((a, x) => a + x.ps.vp + x.ps.op, 0))}</td><td class="n">${money0(people.reduce((a, x) => a + x.ps.total, 0))}</td>${s.mods.funds ? `<td class="n">${money0(people.reduce((a, x) => a + (x.ps.getsAdvance ? x.ps.balance : 0), 0))}</td>` : ''}</tr></tfoot>
     </table></div>
   </div>
-
-  ${s.mods.machine !== false ? `<div class="card">
-    <h3>Machine-wise rent<small>estimate from log hours</small></h3>
-    ${rentRows.length ? `<div class="scroll"><table>
-      <thead><tr><th>Machine</th><th>Basis</th><th class="n">Rate</th><th class="n">Hr / days</th><th class="n">Rent</th></tr></thead>
-      <tbody>${rentRows.map(x => `<tr><td class="nowrap"><b>${esc(x.m.no)}</b><div class="tiny">${esc(x.m.type)}</div></td><td class="tiny">${esc(x.r.basis)}</td><td class="n">${x.r.unit ? dec(x.r.unit, 0) : '<span class="tiny">no rate</span>'}</td><td class="n">${dec(x.r.qty)}</td><td class="n"><b>${money0(x.r.rent)}</b></td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="4">TOTAL RENT</td><td class="n">${money0(t.rent)}</td></tr></tfoot>
-    </table></div>` : '<div class="empty">Rent appears here once machine log entries are added.</div>'}
-    ${t.rent === 0 && s.machineLog.length ? '<div class="pad tiny">Rent shows 0 because no rates are filled in the Rate Master. Add them under <b>Machine &rarr; Machines</b>.</div>' : ''}
-    ${(s.bills || []).length ? `<div class="pad">
-      <div class="tiny" style="margin-bottom:8px;line-height:1.7">Rent bills: billed <b>${money(t.rentBilled)}</b> &middot; machine rent (paid) <b style="color:var(--paid)">${money(t.rentIn)}</b> &middot; unpaid <b style="color:${t.rentUnpaid > 0.5 ? 'var(--due)' : 'var(--paid)'}">${money(t.rentUnpaid)}</b><br>Paid to owners ${money(t.rentPaid)} &middot; still to pay owners ${money(t.rentDue)} &middot; commission ${money(t.rentComm)} (${esc(pendingParty(s))})</div>
-      <button class="btn sec sm" style="width:100%" data-act="sub" data-t="machine" data-v="bill">Open rent bills</button>
-    </div>` : ''}
-  </div>` : ''}
 
   ${(() => {
     const ms = modeStats(s);
@@ -2702,16 +2786,16 @@ function machineSumView(s) {
     <div class="kpi"><div class="k">DIESEL (L)</div><div class="v num">${dec(tot.d)}</div></div>
     <div class="kpi b"><div class="k">DIESEL / HOUR</div><div class="v num">${tot.h ? dec(tot.d / tot.h, 2) : '—'}</div></div>
   </div>
-  ${unassigned.length ? `<div class="warn">${unassigned.length} entries have no machine number — their ${dec(unassigned.reduce((a, r) => a + hoursOf(r), 0))} hours are not counted in any machine rent. Fix them under <b>Daily log &rarr; No machine</b>.</div>` : ''}
+  ${unassigned.length ? `<div class="warn">${unassigned.length} entries have no machine number — their ${dec(unassigned.reduce((a, r) => a + hoursOf(r), 0))} hours are not counted for any machine. Fix them under <b>Daily log &rarr; No machine</b>.</div>` : ''}
   <div class="card"><h3>Type-wise</h3><div class="scroll"><table>
-    <thead><tr><th>Type</th><th class="n">Count</th><th class="n">Hours</th><th class="n">Diesel</th><th class="n">L / hr</th><th class="n">Rent</th></tr></thead>
+    <thead><tr><th>Type</th><th class="n">Count</th><th class="n">Hours</th><th class="n">Diesel</th><th class="n">L / hr</th><th class="n">Billed</th></tr></thead>
     <tbody>${types.map(t => {
       const list = rows.filter(x => x.m.type === t);
       const th = list.reduce((a, x) => a + x.r.hours, 0), tdz = list.reduce((a, x) => a + x.r.diesel, 0);
       return `<tr><td>${esc(t)}</td><td class="n">${list.length}</td><td class="n">${dec(th)}</td><td class="n">${dec(tdz)}</td><td class="n"><b style="color:var(--rent)">${th ? dec(tdz / th, 2) : '—'}</b></td><td class="n">${money0(list.reduce((a, x) => a + x.r.rent, 0))}</td></tr>`;
     }).join('')}</tbody></table></div></div>
   <div class="card"><h3>Machine-wise</h3><div class="scroll"><table>
-    <thead><tr><th>Machine</th><th class="n">Hours</th><th class="n">Diesel (L)</th><th class="n">L / hr</th><th class="n">Rent</th></tr></thead>
+    <thead><tr><th>Machine</th><th class="n">Hours</th><th class="n">Diesel (L)</th><th class="n">L / hr</th><th class="n">Billed</th></tr></thead>
     <tbody>${rows.filter(x => x.r.entries).sort((a, b) => b.r.hours - a.r.hours).map(x => `<tr><td class="nowrap"><b class="${x.m.removed ? 'off' : ''}">${esc(x.m.no)}</b><div class="tiny">${esc(x.m.type)}${x.m.owner ? ' \u00b7 ' + esc(x.m.owner) : ''}${x.m.removed ? ' \u00b7 removed' : ''}</div></td><td class="n">${dec(x.r.hours)}<div class="tiny">${x.r.entries} entries</div></td><td class="n">${dec(x.r.diesel)}</td><td class="n"><b style="color:var(--rent)">${x.r.hours ? dec(x.r.diesel / x.r.hours, 2) : '—'}</b></td><td class="n">${money0(x.r.rent)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No log entries.</td></tr>'}</tbody>
   </table></div></div>`;
 }
@@ -2779,20 +2863,17 @@ function machineMasterView(s) {
       <div class="tiny" style="margin-top:8px">A snapshot is taken before any change &mdash; you can restore it from Data safety.</div></div>
     </div>`;
   })()}
-  <div class="card mt"><h3>Rate master<small>fill rates here</small></h3><div class="scroll"><table>
-    <thead><tr><th>Type</th><th>Basis</th><th class="n">Package Rate</th><th class="n">Units</th><th class="n">Per Hr/Day</th></tr></thead>
-    <tbody>${s.rateMaster.map((r, i) => `<tr data-act="rmEdit" data-v="${i}"><td><b>${esc(r.type)}</b></td><td class="tiny">${esc(r.basis)}</td><td class="n">${r.packageRate ? money0(r.packageRate) : '<span class="pill u">to fill</span>'}</td><td class="n">${r.packageUnits}</td><td class="n">${r.packageRate ? dec(num(r.packageRate) / (num(r.packageUnits) || 1), 0) : '—'}</td></tr>`).join('')}</tbody>
-  </table></div>
-  <div class="pad">
-    <button class="btn sec sm" style="width:100%" data-act="rmAdd">${ICON.plus}Add machine type</button>
-    <div class="tiny" style="margin-top:8px">Tap a type to change its rate. For a machine with its own rate, open that machine and set it there.</div>
-  </div></div>
+  <div class="card mt"><h3>Machine types<small>how each type is billed</small></h3>
+    ${s.rateMaster.map((r, i) => `<div class="row" data-act="rmEdit" data-v="${i}">${ava(r.type, 'machine')}
+      <div class="main"><div class="ttl">${esc(r.type)}</div><div class="sub">${s.machines.filter(m => m.type === r.type).length} machines</div></div>
+      <span class="pill n" style="flex:0 0 auto">${r.basis === 'Daily' ? 'Monthly' : dec(num(r.packageUnits) || 240, 0) + ' hrs'}</span></div>`).join('')}
+    <div class="pad"><button class="btn sec sm" style="width:100%" data-act="rmAdd">${ICON.plus}Add machine type</button></div>
+  </div>
   ${(() => {
     const mrow = m => `<div class="row" data-act="mEdit" data-v="${m.id}">
       <span class="${m.removed ? 'off' : ''}">${ava(m.type || 'none', 'machine')}</span>
       <div class="main"><div class="ttl"><span class="${m.removed ? 'off' : ''}">${esc(m.no)}</span> <span class="pill n">${esc(m.type)}</span>${m.removed ? ' <span class="pill n">removed' + (m.removedOn ? ' ' + fmtDate(m.removedOn) : '') + '</span>' : ''}</div>
       <div class="sub">${esc(m.owner || 'no owner')}${m.operator ? ' &middot; ' + esc(m.operator) : ''}${(() => { const q = machineRent(s, m.no); return q.hours ? ' &middot; <b>' + dec(q.diesel / q.hours, 2) + ' L/hr</b>' : ''; })()}</div></div>
-      <div class="amt tiny" style="font-weight:600">${has(m.monthlyRate) && num(m.monthlyRate) ? money0(m.monthlyRate) : ''}</div>
       <div class="rbtns">
         ${m.removed
           ? `<button class="rowbtn" data-act="mRestore" data-v="${m.id}" style="color:var(--paid)">Restore</button>`
@@ -3381,45 +3462,47 @@ function billingView(s) {
   const comm = rows.reduce((a, b) => a + billComm(b), 0);
   const paid = rows.reduce((a, b) => a + billPaid(b), 0);
   const due = rows.reduce((a, b) => a + billDue(b), 0);
-  const rentIn = rows.reduce((a, b) => a + billRent(b), 0), unpaid = rows.reduce((a, b) => a + billUnpaid(b), 0);
-  const party = esc(pendingParty(s));
+  const party = pendingParty(s);
+  const f = UI.blFilt || 'all';
+  const list = rows.filter(b => f === 'all' || (f === 'paid' ? billStatus(b) === 'Paid' : billStatus(b) !== 'Paid'));
+  const todo = machinesToBill(s), ready = todo.filter(x => x.p.ready).length;
+  const showAll = !!UI.blAllM;
+  const todoRow = ({ m, p }) => `<div class="row" data-act="mbNew" data-v="${esc(m.no)}">
+      ${ava('', 'machine', p.ready ? 'c3' : 'c6')}
+      <div class="main"><div class="ttl">${esc(m.no)} ${p.ready ? '<span class="pill p">ready to bill</span>' : ''}</div>
+      <div class="sub">${esc(m.owner || m.type || '')}${p.last ? ' &middot; last bill to ' + fmtDate(p.last) : ' &middot; no bill yet'}</div>
+      <div class="mbar"><i style="width:${Math.round(p.pct * 100)}%"></i></div></div>
+      <div class="amt tiny" style="font-weight:700">${p.cyc.k === 'm' ? p.days + ' days<br><span class="muted">' + fmtDate(p.from) + ' &ndash; ' + fmtDate(p.to) + '</span>' : dec(p.hours, 0) + ' / ' + dec(p.cyc.units, 0) + '<br><span class="muted">hours</span>'}</div></div>`;
+  const billRow = b => {
+    const no = billMachineNo(b), hrs = (b.items || []).reduce((a, i) => a + num(i.hours), 0);
+    return `<div class="row" data-act="blOpen" data-v="${b.id}">
+      ${ava('', 'bill', billStatus(b) === 'Paid' ? 'c3' : 'c5')}
+      <div class="main"><div class="ttl">${esc(no || b.owner || '—')} ${billPill(b)}</div>
+      <div class="sub">${no ? esc(b.owner || '') + ' &middot; ' : ''}${esc(b.no || '')}${b.from ? ' &middot; ' + fmtDate(b.from) + ' &ndash; ' + fmtDate(b.to) : ' &middot; ' + fmtDate(b.date)}${hrs ? ' &middot; ' + dec(hrs, 0) + ' hrs' : ''}</div></div>
+      <div class="amt">${money0(billTotal(b))}</div></div>`;
+  };
   return `
-  <button class="btn" data-act="blAdd">${ICON.plus}New bill</button>
+  <button class="btn" data-act="blAdd">${ICON.plus}New machine bill</button>
 
   <div class="kpis mt">
     <div class="kpi b"><div class="k">TOTAL BILLED</div><div class="v num">${money0(billed)}</div></div>
-    <div class="kpi"><div class="k">COMMISSION</div><div class="v num">${money0(comm)}</div></div>
-    <div class="kpi g"><div class="k">PAID BILLS</div><div class="v num">${money0(rentIn)}</div></div>
-    <div class="kpi r"><div class="k">UNPAID BILLS</div><div class="v num">${money0(unpaid)}</div></div>
-  </div>
-  <div class="tiny" style="margin:2px 4px 0;line-height:1.7">Paid to owners <b>${money(paid)}</b> &middot; still to pay owners <b>${money(due)}</b>.<br>On the Dashboard, <b>paid bills</b> show as <b>Machine rent</b> and <b>unpaid bills</b> as <b>Unpaid machine bills</b>. <b>Commission</b> goes to the <b>${party}</b> account.</div>
-
-  ${commCard(s)}
-
-  <div class="card mt"><h3>Bills<small>${rows.length}</small></h3>
-    ${rows.length ? rows.map(b => {
-      const t = billTotal(b), c = billComm(b), pd = billPaid(b);
-      return `<div class="row" data-act="blOpen" data-v="${b.id}">
-        ${ava('', 'bill', 'c5')}
-        <div class="main"><div class="ttl">${esc(b.owner || '—')} ${billPill(b)}</div>
-        <div class="sub">${esc(b.no || '')} &middot; ${fmtDate(b.date)}${b.from ? ' &middot; ' + fmtDate(b.from) + ' to ' + fmtDate(b.to) : ''}</div>
-        <div class="sub">${c ? 'Commission ' + money0(c) + ' &middot; owner ' + money0(t - c) : 'No commission'}${pd ? ' &middot; paid ' + money0(pd) : ''}</div></div>
-        <div class="amt">${money0(t)}</div></div>`;
-    }).join('') : '<div class="empty">No bills yet. Tap "+ New bill".</div>'}
+    <div class="kpi"><div class="k">${esc(party.split(' ')[0].toUpperCase())} SHARE</div><div class="v num">${money0(comm)}</div></div>
+    <div class="kpi g"><div class="k">PAID TO OWNERS</div><div class="v num">${money0(paid)}</div></div>
+    <div class="kpi r"><div class="k">PENDING TO OWNERS</div><div class="v num">${money0(due)}</div></div>
   </div>
 
-  <div class="card"><div class="pad tiny" style="line-height:1.8">
-    Your company name, address, mobile, the bill number series, the commission account name and the default commission % are set in <b>More &rarr; Settings</b>.
-    Next bill will be <b>${esc(nextBillNo(s))}</b>.
-  </div></div>
+  ${todo.length ? `<div class="card mt"><h3>Machines to bill<small>${ready ? ready + ' ready' : 'none ready yet'}</small></h3>
+    ${(showAll ? todo : todo.slice(0, 6)).map(todoRow).join('')}
+    ${todo.length > 6 ? `<div class="pad"><button class="btn sec sm" style="width:100%" data-act="blAllM">${showAll ? 'Show less' : 'Show all ' + todo.length + ' machines'}</button></div>` : ''}
+  </div>` : ''}
 
-  <div class="card"><h3>How this works</h3><div class="pad tiny" style="line-height:1.9">
-    <b>1.</b> Tap <b>+ New bill</b>, put the machine owner name and the period.<br>
-    <b>2.</b> Tap <b>Fill from machine log</b> and set the <b>rate</b> on each machine &mdash; or add lines yourself.<br>
-    <b>3.</b> Put the <b>commission</b> as a % or an amount. Example: bill 2,00,000 with 20% &rarr; 40,000 goes to <b>${party}</b>, 1,60,000 is the owner's share.<br>
-    <b>4.</b> Each time you pay the owner, open the bill and tap <b>Add payment</b>. Part payments are fine.<br>
-    <b>5.</b> A new bill shows under <b>Unpaid machine bills</b> on the Dashboard. Once the owner is fully paid, the whole bill moves to <b>Machine rent</b> (a part payment moves just that part). Commission is kept in the <b>${party}</b> account.
-  </div></div>`;
+  <div class="card"><h3>Bills<small>${rows.length}</small></h3>
+    ${rows.length ? `<div class="chips" style="border:0;padding:4px 14px 10px">${[['all', 'All'], ['unpaid', 'Not fully paid'], ['paid', 'Paid']].map(([k, l]) => `<button class="chip${f === k ? ' on' : ''}" data-act="blFilt" data-v="${k}">${l}</button>`).join('')}</div>` : ''}
+    ${list.map(billRow).join('') || `<div class="empty">${rows.length ? 'No bill here.' : 'No bills yet. Tap <b>+ New machine bill</b>, or a machine above.'}</div>`}
+  </div>
+
+  ${commCard(s, true)}
+  <div class="tiny" style="margin:4px 6px 0;line-height:1.7">Bill amounts and the ${esc(party)} share are typed by hand on each bill. Next bill no <b>${esc(nextBillNo(s))}</b> &middot; series and company details in Menu &rarr; Settings.</div>`;
 }
 
 /* the commission of every rent bill, kept in one account (Mangalmurti Developers) */
@@ -3433,10 +3516,10 @@ function commCard(s, compact) {
   const name = pendingParty(s);
   if (compact) {
     return `<div class="card">
-      <h3>${esc(name)}<small>commission account</small></h3>
-      <div class="row" data-act="sub" data-t="machine" data-v="bill">${ava('', 'bill', 'c5')}
-        <div class="main"><div class="ttl">Commission on rent bills</div>
-        <div class="sub">${rows.length} bill${rows.length === 1 ? '' : 's'}</div></div>
+      <h3>${esc(name)}<small>share account</small></h3>
+      <div class="row" data-act="commOpen">${ava('', 'bill', 'c5')}
+        <div class="main"><div class="ttl">Share on machine bills</div>
+        <div class="sub">${rows.length} bill${rows.length === 1 ? '' : 's'} &middot; tap for the statement</div></div>
         <div class="amt">${money0(total)}</div></div>
     </div>`;
   }
@@ -4370,16 +4453,16 @@ function ownerBill(s, owner, from, to, detail) {
 
     <h2>Machine-wise rent</h2>
     <table>
-      <thead><tr><th>Sr</th><th>Machine</th><th>Type</th><th>Basis</th><th class="n">${'Hours / Days'}</th><th class="n">Rate</th><th class="n">Diesel (L)</th><th class="n">Amount</th></tr></thead>
+      <thead><tr><th>Sr</th><th>Machine</th><th>Type</th><th>Basis</th><th class="n">${'Hours / Days'}</th><th class="n">Bills</th><th class="n">Diesel (L)</th><th class="n">Owner's share</th></tr></thead>
       <tbody>${b.lines.map((x, i) => `<tr>
         <td class="n">${i + 1}</td>
         <td><b>${esc(x.m.no)}</b></td>
         <td>${esc(x.m.type || '-')}</td>
         <td>${esc(x.r.basis || '-')}</td>
         <td class="n">${dec(x.r.qty)}</td>
-        <td class="n">${x.r.unit ? dec(x.r.unit, 0) : '-'}</td>
+        <td class="n">${x.r.bills || '-'}</td>
         <td class="n">${x.r.diesel ? dec(x.r.diesel) : '-'}</td>
-        <td class="n">${money0(x.r.rent)}</td></tr>`).join('') || '<tr><td colspan="8">No machine entries in this period</td></tr>'}</tbody>
+        <td class="n">${money0(x.r.ownerShare)}</td></tr>`).join('') || '<tr><td colspan="8">No machine entries in this period</td></tr>'}</tbody>
       <tfoot><tr><td colspan="4">TOTAL</td><td class="n">${dec(hrs)}</td><td></td><td class="n">${dec(dsl)}</td><td class="n">${money0(b.rent)}</td></tr></tfoot>
     </table>
 
@@ -4425,7 +4508,7 @@ function ownerBillText(s, owner, from, to) {
   return ['*' + (site().name || 'Site') + ' - Machine rent*',
     'Owner: ' + owner,
     'Period: ' + (from ? fmtDate(from) : 'start') + ' to ' + (to ? fmtDate(to) : fmtDate(today())), '']
-    .concat(b.lines.map(x => x.m.no + '  ' + dec(x.r.qty) + ' ' + (x.r.basis === 'Daily' ? 'days' : 'hr') + '  =  ' + money(x.r.rent)))
+    .concat(b.lines.map(x => x.m.no + '  ' + dec(x.r.qty) + ' ' + (x.r.basis === 'Daily' ? 'days' : 'hr') + '  =  ' + money(x.r.ownerShare)))
     .concat(['', b.opening ? 'Previous balance: ' + money(b.opening) : '',
       'Rent this period: ' + money(b.rent),
       'Paid: ' + money(b.paid),
@@ -4458,14 +4541,14 @@ function billInvoice(s, b) {
         <th style="width:7%">Sr</th>
         <th>Machine / description</th>
         <th class="n">Hours</th>
-        <th class="n">Rate / hr</th>
+        <th class="n">Billing</th>
         <th class="n">Amount (&#8377;)</th>
       </tr></thead>
       <tbody>${(b.items || []).map((i, k) => `<tr>
         <td class="sr">${k + 1}</td>
         <td><b>${esc(i.desc || '')}</b></td>
         <td class="n">${num(i.hours) ? dec(i.hours) : 'Lumpsum'}</td>
-        <td class="n">${num(i.rate) ? money0(i.rate) : 'Fixed'}</td>
+        <td class="n">${num(i.rate) ? money0(i.rate) + ' / hr' : (billCycle(s, billNoOfItem(i)).k === 'm' ? 'Monthly' : dec(billCycle(s, billNoOfItem(i)).units, 0) + ' hrs')}</td>
         <td class="n">${money0(i.amount)}</td></tr>`).join('') || '<tr><td colspan="5">No items</td></tr>'}</tbody>
       <tfoot><tr><td colspan="2">Total</td><td class="n">${hrs ? dec(hrs) : ''}</td><td></td><td class="n">${money0(tot)}</td></tr></tfoot>
     </table>
@@ -4479,7 +4562,7 @@ function billInvoice(s, b) {
 
     ${totalsBlock([
       ['Bill total', money(tot)],
-      comm ? ['Less: commission &mdash; ' + esc(pendingParty(s)) + ' (' + dec(pctOf(comm, tot), 2) + '%)', '- ' + money(comm)] : null,
+      comm ? ['Less: ' + esc(pendingParty(s)) + ' share (' + dec(pctOf(comm, tot), 2) + '%)', '- ' + money(comm)] : null,
       comm ? ['Owner\u2019s share', money(own)] : null,
       rec ? ['Less: paid to owner', '- ' + money(rec)] : null,
       (comm || rec) ? ['Balance due to owner', money(due)] : ['Grand total', money(tot)]
@@ -4506,7 +4589,7 @@ function billInvoiceText(s, b) {
     .concat((b.items || []).map(i => i.desc + '  ' + (num(i.hours) ? dec(i.hours) + ' hrs' : 'lumpsum') +
       (num(i.rate) ? ' × ' + money(i.rate) : '') + '  =  ' + money(i.amount)))
     .concat(['', '*Bill total: ' + money(tot) + '*'])
-    .concat(comm ? ['Less commission (' + pendingParty(s) + ', ' + dec(pctOf(comm, tot), 2) + '%):  ' + money(comm), '*Owner\u2019s share: ' + money(tot - comm) + '*'] : [])
+    .concat(comm ? ['Less ' + pendingParty(s) + ' share (' + dec(pctOf(comm, tot), 2) + '%):  ' + money(comm), '*Owner\u2019s share: ' + money(tot - comm) + '*'] : [])
     .concat(pays.map(p => 'Paid ' + fmtDate(p.date) + (p.mode ? ' (' + p.mode + ')' : '') + ':  ' + money(p.amount)))
     .concat(rec || comm ? [billDue(b) > 0.5 ? '*Balance due to owner: ' + money(billDue(b)) + '*' : '*FULLY PAID*'] : []).join('\n');
 }
@@ -4608,8 +4691,8 @@ function machineForm(s, rec) {
   const upd = () => {
     const h = (val('f_in') !== '' && val('f_out') !== '') ? num(val('f_out')) - num(val('f_in')) : '';
     document.getElementById('f_hr').value = h === '' ? '' : dec(h, 2);
-    const t = machineType(s, val('f_no')); const ri = rateInfo(s, val('f_no'));
-    document.getElementById('f_type').innerHTML = t ? `${esc(t)} &middot; ${esc(ri.basis)} basis${ri.unit ? ' &middot; ' + dec(ri.unit, 0) + '/' + (ri.basis === 'Daily' ? 'day' : 'hr') : ' &middot; rate not set'}` : '';
+    const t = machineType(s, val('f_no'));
+    document.getElementById('f_type').innerHTML = t ? `${esc(t)} &middot; billed every ${esc(billCycle(s, val('f_no')).label)}` : '';
   };
   ['f_in', 'f_out', 'f_no'].forEach(id => document.getElementById(id).addEventListener('input', upd));
   upd();
@@ -4730,17 +4813,13 @@ function machineMasterForm(s, rec) {
         <div class="field"><label>Owner name</label><input id="f_own" value="${esc(r.owner || '')}"></div>
         <div class="field"><label>Operator name</label><input id="f_op" value="${esc(r.operator || '')}"></div>
       </div>
-      <div class="f2">
-        <div class="field"><label>Make</label><input id="f_make" value="${esc(r.make || '')}"></div>
-        <div class="field"><label>Rate for this machine</label><input type="number" inputmode="decimal" id="f_rate" value="${has(r.monthlyRate) ? r.monthlyRate : ''}" placeholder="from Rate Master"></div>
-      </div>
-      <div class="tiny">Leave this empty to use the Rate Master rate for the type. Fill it only if this machine has its own rate.</div>
+      <div class="field"><label>Make</label><input id="f_make" value="${esc(r.make || '')}"></div>
       ${rec ? `<div style="margin-top:14px">${segField('Status on site', 'f_mst', ['Working', 'Removed'], rec.removed ? 'Removed' : 'Working')}</div>
       <div class="tiny" style="margin-top:-4px">Removed machines stay in reports but are not offered in new machine entries.</div>` : ''}
     </div></div>`,
     () => {
       const no = val('f_no'); if (!no) return toast('Enter the machine number');
-      const o = { no, type: val('f_type'), owner: val('f_own'), operator: val('f_op'), make: val('f_make'), monthlyRate: numVal('f_rate') };
+      const o = { no, type: val('f_type'), owner: val('f_own'), operator: val('f_op'), make: val('f_make'), monthlyRate: rec && has(rec.monthlyRate) ? rec.monthlyRate : '' };
       if (rec) {
         const old = rec.no; Object.assign(rec, o);
         if (old !== no) s.machineLog.forEach(l => { if (l.machineNo === old) l.machineNo = no; });
@@ -4767,26 +4846,22 @@ function rateForm(s, i) {
   const isNew = (i == null || i < 0);
   const r = isNew ? { type: '', basis: 'Hourly', packageRate: '', packageUnits: 240 } : s.rateMaster[i];
   const used = isNew ? 0 : s.machines.filter(m => m.type === r.type).length;
-  openSheet(isNew ? 'New machine type' : 'Rate \u2014 ' + esc(r.type), `
+  openSheet(isNew ? 'New machine type' : 'Machine type', `
     <div class="card"><div class="pad">
       ${isNew
         ? `<div class="field"><label>Machine type name</label><input id="f_type" placeholder="e.g. Dumper, Crane, Grader" autocomplete="off"></div>`
         : `<div class="field"><label>Machine type</label><input id="f_type" value="${esc(r.type)}"></div>
            <div class="tiny" style="margin:-6px 0 10px">${used ? used + ' machines use this type. Renaming it renames theirs too.' : 'No machine uses this type yet.'}</div>`}
-      ${segField('Rate basis', 'f_basis', ['Hourly', 'Daily'], r.basis)}
-      <div class="f2">
-        <div class="field"><label>Package rate (Rs)</label><input type="number" inputmode="decimal" id="f_rate" value="${has(r.packageRate) && num(r.packageRate) ? r.packageRate : ''}"></div>
-        <div class="field"><label>Package units</label><input type="number" inputmode="decimal" id="f_units" value="${has(r.packageUnits) ? r.packageUnits : ''}"></div>
-      </div>
-      <div class="tiny" style="line-height:1.7">Example: if a Poclain is hired at a monthly rate covering 240 hours, set Package Rate = that rate and Units = 240. For a day-based machine like a Hiwa, set Basis = Daily and Units = 30.<br>You can fill the rate in later.</div>
+      ${segField('Billed every', 'f_basis', ['240 hours', 'Month'], r.basis === 'Daily' ? 'Month' : '240 hours')}
+      <div class="tiny">Poclain, JCB: every 240 hours. Hiwa: every month. The bill amount itself is typed on each bill.</div>
     </div></div>`,
     () => {
       const nm = val('f_type').trim();
       if (!nm) return toast('Enter a type name');
       const clash = s.rateMaster.find((x, k) => k !== i && String(x.type).toLowerCase() === nm.toLowerCase());
       if (clash) return toast('That type already exists');
-      const basis = segVal('f_basis'), rate = num(val('f_rate'));
-      const units = num(val('f_units')) || (basis === 'Daily' ? 30 : 240);
+      const basis = segVal('f_basis') === 'Month' ? 'Daily' : 'Hourly', rate = isNew ? 0 : num(r.packageRate);
+      const units = basis === 'Daily' ? 30 : ((!isNew && r.basis === 'Hourly' && num(r.packageUnits)) || 240);
       if (isNew) {
         s.rateMaster.push({ type: nm, basis, packageRate: rate, packageUnits: units });
       } else {
@@ -5998,10 +6073,11 @@ document.addEventListener('click', async e => {
       window.open('https://wa.me/?text=' + encodeURIComponent(ownerBillText(s, o, val('ob_f') || UI.obFrom || '', val('ob_t') || UI.obTo || '')), '_blank');
       break;
     }
-    case 'blAdd':
-      BDRAFT = { no: nextBillNo(s), date: today(), owner: '', mobile: '', site: s.name || '', from: '', to: '', items: [], payments: [], note: '',
-        commPct: has(s.commPctDefault) && num(s.commPctDefault) ? s.commPctDefault : '', commission: 0 };
-      blSheet(s); break;
+    case 'blAdd': closeSheet(); BDRAFT = mbDraft(s, ''); mbSheet(s); break;
+    case 'mbNew': closeSheet(); BDRAFT = mbDraft(s, v); mbSheet(s); break;
+    case 'blAllM': UI.blAllM = !UI.blAllM; render(); break;
+    case 'blFilt': UI.blFilt = v; render(); break;
+    case 'commOpen': openSheet(esc(pendingParty(s)), commCard(s), null, null); break;
     case 'blOw': {
       blGrab(); BDRAFT.owner = v;
       const last = (s.bills || []).filter(b => b.owner === v).sort(byDateDesc)[0];
@@ -6057,7 +6133,7 @@ document.addEventListener('click', async e => {
       const b = (s.bills || []).find(x => x.id === v);
       if (!b) break;
       BDRAFT = JSON.parse(JSON.stringify(b));
-      closeSheet(); blSheet(s); break;
+      closeSheet(); ((b.items || []).length <= 1 ? mbSheet : blSheet)(s); break;
     }
     case 'blPrint': { const b = (s.bills || []).find(x => x.id === v); if (b) { closeSheet(); openBill(billInvoice(s, b), 'bill-' + b.no); render(); } break; }
     case 'blWa': { const b = (s.bills || []).find(x => x.id === v); if (b) window.open('https://wa.me/?text=' + encodeURIComponent(billInvoiceText(s, b)), '_blank'); break; }
@@ -6530,6 +6606,7 @@ function blLines() {
 }
 
 function blSheet(s) {
+  MBMODE = false;
   /* every route into this sheet sets BDRAFT first, but if one ever does not,
      start a blank bill rather than take the whole app down */
   if (!BDRAFT || !Array.isArray(BDRAFT.items)) {
@@ -6612,6 +6689,132 @@ function blSheet(s) {
   }
 }
 
+/* ---------- one machine, one bill: every 240 hours or every month, amounts typed by hand ---------- */
+let MBMODE = false;
+function mbDraft(s, no) {
+  const m = no ? machineOf(s, no) : null;
+  const d = { no: nextBillNo(s), date: today(), owner: m ? m.owner || '' : '', mobile: '', site: s.name || '', from: '', to: '', items: [], payments: [], note: '',
+    commPct: '', commission: 0, machineNo: m ? m.no : '' };
+  if (m) {
+    const p = nextBillPeriod(s, m.no); d.from = p.from; d.to = p.to;
+    const last = (s.bills || []).filter(b => b.owner && b.owner === d.owner && b.mobile).sort(byDateDesc)[0];
+    if (last) d.mobile = last.mobile;
+  }
+  return d;
+}
+function mbSheet(s) {
+  MBMODE = true;
+  const b = BDRAFT, no = b.machineNo || billMachineNo(b) || '';
+  const amt = (b.items || []).length ? billTotal(b) : 0;
+  const on = s.machines.filter(m => !m.removed), off = s.machines.filter(m => m.removed);
+  const opt = m => `<option value="${esc(m.no)}"${sameNo(m.no, no) ? ' selected' : ''}>${esc(m.no)}${m.type ? ' · ' + esc(m.type) : ''}${m.owner ? ' · ' + esc(m.owner) : ''}</option>`;
+  const pays = b.payments || [];
+  openSheet(b.id ? 'Bill ' + esc(b.no || '') : 'New machine bill', `
+    <div class="field"><label>Machine</label><select id="mb_m"><option value="">— select the machine —</option>${on.map(opt).join('')}${off.length ? '<optgroup label="Removed from site">' + off.map(opt).join('') + '</optgroup>' : ''}${no && !s.machines.some(m => sameNo(m.no, no)) ? `<option selected>${esc(no)}</option>` : ''}</select></div>
+    <div class="f2">
+      <div class="field"><label>Machine owner</label><input id="mb_ow" value="${esc(b.owner || '')}"></div>
+      <div class="field"><label>Owner mobile</label><input id="mb_mo" type="tel" inputmode="numeric" value="${esc(b.mobile || '')}"></div>
+    </div>
+    <div class="card mbcard"><div class="pad">
+      <div class="mbhead"><b>Billing period</b><span id="mb_cyc"></span></div>
+      <button type="button" class="btn sec sm" id="mb_next" style="width:100%;margin:8px 0 10px">Next period</button>
+      <div class="f2">
+        <div class="field"><label>From</label><input type="date" id="mb_f" value="${esc(b.from || '')}"></div>
+        <div class="field"><label>To</label><input type="date" id="mb_t" value="${esc(b.to || '')}"></div>
+      </div>
+      <div class="mblog" id="mb_log"></div>
+    </div></div>
+    <div class="card mbcard"><div class="pad">
+      <div class="field"><label>Bill amount (Rs)</label><input type="number" inputmode="decimal" id="mb_amt" class="bigin" value="${amt ? amt : ''}" placeholder="e.g. 200000"></div>
+      <div class="field"><label>${esc(pendingParty(s))} share (Rs)</label><input type="number" inputmode="decimal" id="mb_cm" value="${num(b.commission) ? b.commission : ''}" placeholder="${has(s.commPctDefault) && num(s.commPctDefault) ? s.commPctDefault + '% of the bill' : 'e.g. 40000'}"></div>
+      <div id="mb_split"></div>
+    </div></div>
+    <div class="card mbcard"><h3>Payments to owner<small>${pays.length}</small></h3>
+      ${pays.length ? pays.map((p, i) => `<div class="row">
+        <div class="main"><div class="ttl">${fmtDate(p.date)}${p.mode ? ' <span class="pill n">' + esc(p.mode) + '</span>' : ''}</div>
+        <div class="sub">${esc(p.remark || 'payment')}</div></div>
+        <div class="amt" style="color:var(--paid)">${money0(p.amount)}</div>
+        <button class="rowbtn" data-act="blPayEdit" data-v="${i}">Edit</button></div>`).join('') : '<div class="empty">No payment yet.</div>'}
+      <div class="pad"><button class="btn sec sm" style="width:100%" data-act="blPayAdd">${ICON.plus}Add payment to owner</button></div>
+    </div>
+    <details class="mbmore"><summary>Bill no, date and note</summary>
+      <div class="f2" style="margin-top:10px">
+        <div class="field"><label>Bill no</label><input id="mb_no" value="${esc(b.no || '')}"></div>
+        <div class="field"><label>Bill date</label><input type="date" id="mb_dt" value="${esc(b.date || today())}"></div>
+      </div>
+      <div class="f2">
+        <div class="field"><label>Site / work place</label><input id="mb_sl" value="${esc(b.site || s.name || '')}"></div>
+        <div class="field"><label>Note on bill</label><input id="mb_nt" value="${esc(b.note || '')}"></div>
+      </div>
+    </details>`,
+    () => {
+      mbGrab();
+      if (!BDRAFT.machineNo) return toast('Select the machine');
+      if (!(billTotal(BDRAFT) > 0)) return toast('Enter the bill amount');
+      if (BDRAFT.from && BDRAFT.to && BDRAFT.from > BDRAFT.to) return toast('"From" is after "To"');
+      if (num(BDRAFT.commission) > billTotal(BDRAFT) + 0.5) return toast('The ' + pendingParty(s) + ' share is more than the bill amount');
+      if (!BDRAFT.owner) BDRAFT.owner = (machineOf(s, BDRAFT.machineNo) || {}).owner || '';
+      if (!BDRAFT.no) BDRAFT.no = nextBillNo(s);
+      const old = BDRAFT.id ? (s.bills || []).find(x => x.id === BDRAFT.id) : null;
+      if (old) Object.assign(old, BDRAFT);
+      else {
+        BDRAFT.id = uid();
+        s.bills.push({ ...BDRAFT });
+        const n = parseInt(String(BDRAFT.no).replace(/\D/g, ''), 10);
+        if (isFinite(n) && n >= num(s.billNext)) s.billNext = n + 1;
+      }
+      MBMODE = false;
+      return true;
+    },
+    b.id ? () => { s.bills = s.bills.filter(x => x.id !== BDRAFT.id); MBMODE = false; } : null);
+  const $i = id => document.getElementById(id);
+  let autoOwner = (machineOf(s, no) || {}).owner || '';
+  const info = () => {
+    const mno = $i('mb_m').value, f = $i('mb_f').value, t = $i('mb_t').value;
+    const cyc = mno ? billCycle(s, mno) : null;
+    $i('mb_cyc').textContent = cyc ? 'every ' + cyc.label : '';
+    $i('mb_next').textContent = cyc ? (cyc.k === 'm' ? 'Next month' : 'Next ' + cyc.label) + ' after the last bill' : 'Next period';
+    $i('mb_next').disabled = !mno;
+    if (!mno) { $i('mb_log').innerHTML = 'Select the machine to see its hours.'; return; }
+    const st = machineLogStats(s, mno, f, t);
+    const lastB = machineBillsOf(s, mno).filter(x => x.id !== BDRAFT.id && x.to).sort((a, c) => String(c.to).localeCompare(String(a.to)))[0];
+    const short = cyc.k === 'h' && f && t && st.hours < cyc.units - 0.05;
+    $i('mb_log').innerHTML = (f || t ? `From the log: <b>${cyc.k === 'm' ? st.days + ' days worked' : dec(st.hours) + ' hours'}</b>${cyc.k === 'm' ? ' &middot; ' + dec(st.hours) + ' hrs' : ' &middot; ' + st.days + ' days'}${st.diesel ? ' &middot; ' + dec(st.diesel) + ' L diesel' : ''}${short ? `<br><span class="amb">${dec(st.hours)} of ${dec(cyc.units, 0)} hours so far</span>` : ''}` : 'Set the period, or tap the button above.')
+      + (lastB ? `<br><span class="muted">Last bill ${esc(lastB.no || '')}: ${fmtDate(lastB.from)} &ndash; ${fmtDate(lastB.to)}</span>` : '<br><span class="muted">No earlier bill for this machine</span>');
+  };
+  const split = () => {
+    const a = num($i('mb_amt').value), c = num($i('mb_cm').value);
+    const el = $i('mb_split');
+    if (!a) { el.innerHTML = ''; return; }
+    const over = c > a + 0.5;
+    el.innerHTML = `<div class="mbsplit"><div><span>Owner's share</span><b style="color:${over ? 'var(--due)' : 'var(--paid)'}">${money(a - c)}</b></div><div><span>${esc(pendingParty(s).split(' ')[0])} share</span><b>${money(c)}${c ? ' <small>' + dec(pctOf(c, a), 2) + '%</small>' : ''}</b></div>${billPaid(BDRAFT) ? `<div><span>Paid to owner</span><b>${money(billPaid(BDRAFT))}</b></div><div><span>Owner pending</span><b style="color:var(--due)">${money(Math.max(0, a - c - billPaid(BDRAFT)))}</b></div>` : ''}</div>${over ? '<div class="tiny" style="color:var(--due)">The share is more than the bill amount.</div>' : ''}`;
+  };
+  $i('mb_m').addEventListener('change', () => {
+    const m = machineOf(s, $i('mb_m').value);
+    if (m && (!$i('mb_ow').value || $i('mb_ow').value === autoOwner)) $i('mb_ow').value = m.owner || '';
+    autoOwner = m ? m.owner || '' : '';
+    if (m && !$i('mb_mo').value) { const last = (s.bills || []).filter(x => x.owner === $i('mb_ow').value && x.mobile).sort(byDateDesc)[0]; if (last) $i('mb_mo').value = last.mobile; }
+    if (m && !BDRAFT.id) { const p = nextBillPeriod(s, m.no); $i('mb_f').value = p.from; $i('mb_t').value = p.to; }
+    info();
+  });
+  $i('mb_next').addEventListener('click', e => { e.preventDefault(); const mno = $i('mb_m').value; if (!mno) return; const p = nextBillPeriod(s, mno, BDRAFT.id); $i('mb_f').value = p.from; $i('mb_t').value = p.to; info(); if (!p.ready) toast(p.cyc.k === 'm' ? 'This month is not over yet' : 'Only ' + dec(p.hours) + ' of ' + dec(p.cyc.units, 0) + ' hours so far'); });
+  ['mb_f', 'mb_t'].forEach(id => $i(id).addEventListener('change', info));
+  $i('mb_amt').addEventListener('input', () => { if (!$i('mb_cm').value && has(s.commPctDefault) && num(s.commPctDefault)) { /* hint only */ } split(); });
+  $i('mb_cm').addEventListener('input', split);
+  info(); split();
+}
+function mbGrab() {
+  const s = site(), no = val('mb_m'), m = machineOf(s, no);
+  BDRAFT.machineNo = no; BDRAFT.owner = val('mb_ow'); BDRAFT.mobile = val('mb_mo');
+  BDRAFT.from = val('mb_f'); BDRAFT.to = val('mb_t');
+  BDRAFT.no = val('mb_no'); BDRAFT.date = val('mb_dt') || today(); BDRAFT.site = val('mb_sl'); BDRAFT.note = val('mb_nt');
+  const amt = num(numVal('mb_amt')), st = no ? machineLogStats(s, no, BDRAFT.from, BDRAFT.to) : { hours: 0, diesel: 0, entries: 0, days: 0 };
+  const cyc = no ? billCycle(s, no) : { k: '' };
+  BDRAFT.items = (no || amt) ? [{ desc: no + (m && m.type ? ' (' + m.type + ')' : ''), machineNo: no, hours: st.hours, days: st.days, diesel: st.diesel, entries: st.entries, rate: '', amount: amt || '' }] : [];
+  BDRAFT.basis = cyc.k; BDRAFT.commPct = ''; BDRAFT.commission = Math.max(0, num(numVal('mb_cm')));
+  if (!Array.isArray(BDRAFT.payments)) BDRAFT.payments = [];
+}
+
 /* bill total -> commission -> owner's share, shown under the commission boxes */
 function splitHtml(s, tot, comm) {
   const c = Math.max(0, num(comm));
@@ -6619,12 +6822,13 @@ function splitHtml(s, tot, comm) {
   const over = c > tot + 0.5;
   return `<div class="scroll"><table><tbody>
     <tr><td class="muted">Bill total</td><td class="right n"><b>${money(tot)}</b></td></tr>
-    <tr><td class="muted">Commission &rarr; ${esc(pendingParty(s))}${c ? ' <span class="tiny">(' + dec(pctOf(c, tot), 2) + '%)</span>' : ''}</td><td class="right n"><b>${c ? '- ' + money(c) : money(0)}</b></td></tr>
+    <tr><td class="muted">${esc(pendingParty(s))} share${c ? ' <span class="tiny">(' + dec(pctOf(c, tot), 2) + '%)</span>' : ''}</td><td class="right n"><b>${c ? '- ' + money(c) : money(0)}</b></td></tr>
     <tr><td class="muted"><b>Owner's share</b></td><td class="right n"><b style="color:${over ? 'var(--due)' : 'var(--paid)'}">${money(tot - c)}</b></td></tr>
   </tbody></table></div>${over ? '<div class="tiny" style="color:var(--due)">Commission is more than the bill total.</div>' : ''}`;
 }
 
 function blGrab() {
+  if (MBMODE && document.getElementById('mb_m')) return mbGrab();
   BDRAFT.owner = val('bl_ow'); BDRAFT.no = val('bl_no'); BDRAFT.date = val('bl_dt');
   BDRAFT.mobile = val('bl_mo'); BDRAFT.site = val('bl_sl');
   BDRAFT.from = val('bl_f'); BDRAFT.to = val('bl_t');
@@ -6641,13 +6845,16 @@ function blGrab() {
 function blOpenSheet(s, b) {
   const tot = billTotal(b), comm = billComm(b), own = billOwner(b), paid = billPaid(b), due = billDue(b);
   const pays = (b.payments || []).map((p, i) => ({ p, i })).sort((x, y) => String(y.p.date).localeCompare(String(x.p.date)));
+  MBMODE = false;
+  const bno = billMachineNo(b);
   openSheet('Bill ' + esc(b.no || ''), `
     <div class="card"><div class="scroll"><table><tbody>
+      ${bno ? `<tr><td class="muted">Machine</td><td class="right"><b>${esc(bno)}</b></td></tr>` : ''}
       <tr><td class="muted">Owner</td><td class="right"><b>${esc(b.owner)}</b></td></tr>
       <tr><td class="muted">Date</td><td class="right">${fmtDate(b.date)}</td></tr>
       ${(b.from || b.to) ? `<tr><td class="muted">Period</td><td class="right">${fmtDate(b.from)} to ${fmtDate(b.to)}</td></tr>` : ''}
       <tr><td class="muted"><b>BILL TOTAL</b></td><td class="right n"><b>${money(tot)}</b></td></tr>
-      <tr><td class="muted">Commission &rarr; ${esc(pendingParty(s))}${comm ? ' <span class="tiny">(' + dec(pctOf(comm, tot), 2) + '%)</span>' : ''}</td><td class="right n">${comm ? '- ' + money(comm) : money(0)}</td></tr>
+      <tr><td class="muted">${esc(pendingParty(s))} share${comm ? ' <span class="tiny">(' + dec(pctOf(comm, tot), 2) + '%)</span>' : ''}</td><td class="right n">${comm ? '- ' + money(comm) : money(0)}</td></tr>
       <tr><td class="muted"><b>OWNER'S SHARE</b></td><td class="right n"><b>${money(own)}</b></td></tr>
       <tr><td class="muted">Paid to owner</td><td class="right n"><b style="color:var(--paid)">${money(paid)}</b></td></tr>
       <tr><td class="muted"><b>OWNER PENDING</b></td><td class="right n"><b style="color:${due > 0.5 ? 'var(--due)' : 'var(--paid)'}">${money(due)}</b></td></tr>
@@ -6662,12 +6869,12 @@ function blOpenSheet(s, b) {
         <div class="amt" style="color:var(--paid)">${money0(p.amount)}</div></div>`).join('') : '<div class="empty">No payment made yet.</div>'}
       <div class="pad">
         <button class="btn" style="width:100%" data-act="bpAdd" data-v="${b.id}">${ICON.plus}Add payment to owner</button>
-        <div class="tiny" style="margin-top:8px">${due > 0.5 ? money(due) + ' still to pay the owner. ' : 'The owner is fully paid. '}${comm ? 'Commission ' + money(comm) + ' is in the <b>' + esc(pendingParty(s)) + '</b> account. ' : 'No commission on this bill &mdash; set it with Edit bill. '}Tap a payment to change or delete it.</div>
+        <div class="tiny" style="margin-top:8px">${due > 0.5 ? money(due) + ' still to pay the owner. ' : 'The owner is fully paid. '}${comm ? esc(pendingParty(s)) + ' share ' + money(comm) + '. ' : ''}Tap a payment to change or delete it.</div>
       </div>
     </div>
     <div class="card"><h3>Machines<small>${(b.items || []).length}</small></h3>
       ${(b.items || []).map(i => `<div class="row"><div class="main"><div class="ttl">${esc(i.desc || '')}</div>
-        <div class="sub">${num(i.hours) ? dec(i.hours) + ' hours' : 'lumpsum'}${num(i.rate) ? ' &times; ' + money(i.rate) : ''}</div></div>
+        <div class="sub">${num(i.hours) ? dec(i.hours) + ' hours' : (num(i.days) ? i.days + ' days' : '')}${num(i.diesel) ? ' &middot; ' + dec(i.diesel) + ' L diesel' : ''}${num(i.rate) ? ' &times; ' + money(i.rate) : ''}</div></div>
         <div class="amt">${money0(i.amount)}</div></div>`).join('')}
     </div>
     <div class="card"><div class="pad">
@@ -6690,13 +6897,13 @@ function payForm(s, bill, idx, draft) {
   const left = Math.max(0, billOwner(bill) - billPaid(bill) + (idx == null ? 0 : num(p.amount)));
   const back = () => {
     closeSheet();
-    if (draft) { blSheet(s); return; }
+    if (draft) { (MBMODE ? mbSheet : blSheet)(s); return; }
     render(); blOpenSheet(s, bill); save();
   };
   openSheet(idx == null ? 'Payment to owner' : 'Edit payment', `
     <div class="card"><div class="pad">
       <div class="tiny" style="margin-bottom:10px;line-height:1.7">${esc(bill.owner || 'Bill')}${bill.no ? ' &middot; ' + esc(bill.no) : ''}<br>
-        Bill ${money(billTotal(bill))}${billComm(bill) ? ' &minus; commission ' + money(billComm(bill)) : ''} &rarr; owner's share <b>${money(billOwner(bill))}</b><br>
+        Bill ${money(billTotal(bill))}${billComm(bill) ? ' &minus; ' + esc(pendingParty(s)) + ' share ' + money(billComm(bill)) : ''} &rarr; owner's share <b>${money(billOwner(bill))}</b><br>
         Still to pay the owner <b style="color:var(--due)">${money(left)}</b></div>
       <div class="f2">
         <div class="field"><label>Date</label><input type="date" id="bp_dt" value="${esc(p.date || today())}"></div>
@@ -6706,7 +6913,7 @@ function payForm(s, bill, idx, draft) {
         <div class="field"><label>Payment mode</label><select id="bp_md">${selOpts(MODES, p.mode, '— mode —')}</select></div>
         <div class="field"><label>Remark</label><input id="bp_rm" value="${esc(p.remark || '')}" placeholder="cheque no, UTR..."></div>
       </div>
-      <div class="tiny">Payments to the owner are tracked against the owner's share. The commission is not paid from here &mdash; it stays in the <b>${esc(pendingParty(s))}</b> account.</div>
+      <div class="tiny">Payments to the owner count against the owner's share of the bill.</div>
     </div></div>`,
     () => {
       const a = num(numVal('bp_am'));
