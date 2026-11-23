@@ -1801,6 +1801,8 @@ function importAppBackup(raw, fileName) {
       const ST = r => norm(r && r.status) === 'paid' ? 'Paid' : 'Unpaid';
       const murumCat = (DB.cats.find(c => /murum/i.test(c.name)) || { name: 'Murum / Filling' }).name;
       let total = 0;
+      const stats = {};
+      const mr = (c, rows) => { const n = mergeRows(c, rows); const st = stats[c] || (stats[c] = { file: 0, added: 0, amt: 0 }); st.file += rows.length; st.added += n; st.amt += sum(rows, r => c === 'bill' ? billTotal(r) : c === 'mlog' ? hrsOf(r) : num(r.amount)); return n; };
       sites.forEach((s, i) => {
         let to = v['to_' + i]; if (to === '__skip') return;
         if (to === '__new') { const ns = { id: uid(), name: S(s.name) || 'New site', place: '', kind: 'Plot development', status: 'Active', dieselOpening: N(s.stockOpening), note: '' }; DB.sites.push(ns); to = ns.id; }
@@ -1824,15 +1826,20 @@ function importAppBackup(raw, fileName) {
         });
         const fd = (s.funds || []).filter(Boolean).map(r => ({ id: S(r.id) || uid(), date: D(r.date), person: S(r.person), from: S(r.from), amount: N(r.amount), mode: S(r.mode), remark: S(r.remark) }));
         ensurePeople([...exp, ...mur, ...ds, ...vp, ...op].map(r => r.paidBy).concat(fd.map(f => f.person)));
-        total += mergeRows('exp', exp.concat(mur)) + mergeRows('mlog', ml) + mergeRows('dsl', ds) + mergeRows('vpay', vp) + mergeRows('bill', bl) + mergeRows('opay', op) + mergeRows('fund', fd);
+        total += mr('exp', exp.concat(mur)) + mr('mlog', ml) + mr('dsl', ds) + mr('vpay', vp) + mr('bill', bl) + mr('opay', op) + mr('fund', fd);
       });
       if (Array.isArray(raw.mfunds)) {
         const fd = raw.mfunds.filter(f => f && f.manager).map(f => ({ id: S(f.id) || uid(), date: D(f.date), person: S(f.manager), from: S(f.from), amount: N(f.amount), mode: S(f.mode), remark: S(f.remark) }));
         uniq(fd.map(f => f.person)).forEach(n => { const p = DB.people.find(x => norm(x.name) === norm(n)); if (p) p.cash = true; else DB.people.push({ id: uid(), name: n, cash: true }); });
-        total += mergeRows('fund', fd);
+        total += mr('fund', fd);
       }
       saveMeta();
-      toast(`Imported ${total.toLocaleString('en-IN')} entries`);
+      const rows = COLLS.filter(c => stats[c] && stats[c].file).map(c => { const st = stats[c]; return `<tr>${td('Type', KIND[c], 'c1')}${td('In file', st.file, 'n')}${td('Added', st.added, 'n')}${td('Already here', st.file - st.added, 'n')}${td('Total in file', c === 'mlog' ? qty(st.amt, 1) + ' hrs' : inr(st.amt), 'n')}</tr>`; }).join('');
+      setTimeout(() => openModal({ title: 'Imported ' + fileName, size: 'wide',
+        body: `<div class="banner good"><b>${total.toLocaleString('en-IN')} entries added.</b> Entries that were already here were skipped, so nothing is counted twice.</div>
+          <div class="tbl"><table class="rt"><thead><tr><th>Type</th><th class="n">In file</th><th class="n">Added</th><th class="n">Already here</th><th class="n">Total in file</th></tr></thead><tbody>${rows || ''}</tbody></table></div>
+          <p class="muted sm">Compare "Total in file" with the totals the Site Manager app shows for the same sites. Send Claude a screenshot of this screen.</p>` }), 50);
+      return false;
     }
   });
 }
@@ -1852,7 +1859,11 @@ async function handleFile(input) {
   if (!isAdmin()) { toast('Only the admin can import.'); return; }
   const isOld = raw && raw.app === 'veershree-plot-expense' && raw.data && typeof raw.data === 'object';
   if (kind === 'check') { if (isOld) runCheck(normalizeDB(raw.data), 'Check against ' + file.name, file.name); else fileProblem(file, 'Choose a backup (.json) of this app or of the old Plot Expense Manager.', text); return; }
-  if (!Store.meta && !isOld) { fileProblem(file, 'This is not a backup of the old Plot Expense Manager. Take the backup in the old app with Reports → Backup (.json).', text); return; }
+  const isSiteMgr = raw && typeof raw === 'object' && !isOld && (Array.isArray(raw.sites) || Array.isArray(raw.mfunds) || raw.machineLog || raw.expenseLog);
+  if (!Store.meta && !isOld) {
+    if (isSiteMgr && kind === 'restore') { siteMgrFirst(raw, file.name); return; }
+    fileProblem(file, 'This is not a backup of the old Plot Expense Manager. Take the backup in the old app with Reports → Backup (.json).', text); return;
+  }
   if (kind === 'restore') restoreBackup(raw, file.name);
   else if (raw && raw.app === 'veershree-plot-expense') restoreBackup(raw, file.name);
   else importAppBackup(raw, file.name);
@@ -2269,6 +2280,13 @@ function startFresh() {
 /* ================= IMPORT OLD BACKUP + CHECK ================= */
 const valN = v => (v === '' || v == null) ? null : (typeof v === 'object' ? JSON.stringify(v) : String(v));
 const bizSame = (a, b) => { const ks = new Set([...Object.keys(a), ...Object.keys(b)].filter(k => k[0] !== '_' && k[0] !== '$')); for (const k of ks) if (valN(a[k]) !== valN(b[k])) return false; return true; };
+/* empty database + a Site Manager app backup: start with the standard lists (as the first version did) and import into them */
+async function siteMgrFirst(raw, name) {
+  const n = (raw.sites || []).length;
+  if (!await confirmBox(`This is a backup of the <b>Site Manager app</b>${n ? ` with ${n} site${n > 1 ? 's' : ''}` : ''}. The new app is still empty. Start with the standard lists (sites, people, expense heads and the Waki machine list) and import this file into them?`, { ok: 'Start and import', danger: false, title: 'Site Manager backup' })) return;
+  startFresh();
+  importAppBackup(raw, name);
+}
 function fileProblem(file, msg, text) {
   const start = text ? String(text).slice(0, 70) : '';
   openModal({ title: 'Could not import this file', size: 'narrow',
@@ -2362,13 +2380,19 @@ async function runImport(inc, plan, o) {
 }
 async function runCheck(oldData, title, fileName) {
   progress('Reading everything back from the online database…');
-  let fresh;
+  let fresh, extraN = 0;
   try {
     const keys = [...new Set(ALLSITES.map(s => safeId(s.id)))].concat('_nosite');
     const rows = await CLOUD.getAllServer(keys);
     const meta = await CLOUD.getMetaServer() || {};
     fresh = blankDB(); fresh.sites = meta.sites || []; fresh.people = meta.people || [];
-    for (const r of rows) { if (r._test || r._movedTo || r._del || !fresh[r._c]) continue; fresh[r._c].push(r); }
+    // compare the backup's own entries; entries that came from elsewhere (e.g. a Site Manager import) are counted apart
+    const inBackup = new Set(); for (const c of COLLS) for (const r of (oldData[c] || [])) inBackup.add(c + ':' + docIdFor(c, r.id));
+    for (const r of rows) {
+      if (r._test || r._movedTo || r._del || !fresh[r._c]) continue;
+      if (!inBackup.has(r._c + ':' + String(r.$p || '').split('/').pop())) { extraN++; continue; }
+      fresh[r._c].push(r);
+    }
   } catch (e) { closeModal(); toast('Could not read back: ' + (e.code || e.message)); return; }
   const A = OldCalc.summary(oldData), B = OldCalc.summary(fresh);
   const cmp = OldCalc.compare(A, B);
@@ -2384,6 +2408,7 @@ async function runCheck(oldData, title, fileName) {
   openModal({
     title, size: 'wide',
     body: `<div class="banner ${ok ? 'good' : 'bad'}">${ok ? `<b>Everything matches.</b> All ${cmp.n} checks: totals per site, per head, per person and entry counts are exactly the same in the backup and in the online database.` : `<b>${cmp.bad} of ${cmp.n} checks differ.</b> Do not start using the new app yet. Send Claude a screenshot of the red lines.`}</div>
+      ${extraN ? `<p class="sm"><b>${extraN.toLocaleString('en-IN')}</b> other entr${extraN > 1 ? 'ies are' : 'y is'} in the app but not in this backup (for example from a Site Manager import or added in the new app). ${extraN > 1 ? 'They are' : 'It is'} not part of this check.</p>` : ''}
       <p class="muted sm">Rent here is the full bill amount, the way the old app counted it, so the two can be compared. The new Dashboard shows rent minus commission.</p>
       <h3 class="ck-h">Entries</h3><div class="tbl"><table class="rt"><thead><tr><th>Type</th><th class="n">Backup</th><th class="n">New app</th><th>Check</th></tr></thead><tbody>${cntRows}</tbody></table></div>
       <h3 class="ck-h">By site</h3><div class="tbl"><table class="rt"><thead><tr><th>Site</th><th class="n">Expenses</th><th class="n">Diesel</th><th class="n">Rent bills</th><th class="n">Commission</th><th class="n">Vendor paid</th><th class="n">Owner paid</th><th class="n">Hours</th><th>Check</th></tr></thead><tbody>${siteRows}</tbody>
