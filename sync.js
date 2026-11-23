@@ -297,13 +297,23 @@ function startListeners() {
   FIRST = new Set();
   STOP = CLOUD.startSync(syncPlan(), {
     onDocs, onState: ({ online }) => { if (ONLINE !== online) { ONLINE = online; setPill(); } },
-    onError: (e, key) => { ERR = e && e.code === 'permission-denied' ? 'Your login cannot read part of the data (' + key + '). Ask the admin to check your role.' : 'Sync problem: ' + ((e && (e.code || e.message)) || 'unknown'); setPill(); }
+    onError: (e, key) => {
+      ERR = e && e.code === 'permission-denied' ? 'Your login cannot read part of the data (' + key + '). Ask the admin to check your role.' : 'Sync problem: ' + ((e && (e.code || e.message)) || 'unknown'); setPill();
+      /* refused before anything was downloaded: almost always the Firebase rules are not this app's rules yet */
+      if (e && e.code === 'permission-denied' && !READY && !STARTED && !BLOCKED) {
+        BLOCKED = true;
+        if (isAdmin()) gateRules('Firebase still has the security rules of the earlier test app, so this app is not allowed to read its data yet. Your data is safe: nothing has been changed.');
+        else gateText('Setup not finished', 'The admin still has to finish one step in Firebase. Try again in a few minutes.', true);
+      }
+    }
   });
 }
 /* wait until every list has been read from the server once */
+let BLOCKED = false;
 async function initialSync(maxMs) {
   const t0 = Date.now();
   while (Date.now() - t0 < maxMs) {
+    if (BLOCKED) return false;
     const need = seesAll() ? ['m:app', 'sites', 'mf'] : ['m:app', ...ME.sites.map(s => 's:' + safeId(s))];
     const sitesNow = seesAll() ? [...REMOTE.keys()].filter(p => kindOf(p) === 'site').map(skOf) : ME.sites.map(safeId);
     const all = need.concat(sitesNow.map(sk => 'e:' + sk));
@@ -319,7 +329,8 @@ async function onUser(u) {
   ME.uid = u.uid; ME.email = u.email;
   KEY = 'vsms2:db:' + u.uid;
   const rec = await loadRecord(u.uid);
-  if (rec && rec.me && rec.me.active && rec.me.uid === u.uid) {
+  /* open straight from the phone copy only when it holds sites; an empty copy goes through the normal start (welcome / rules screens) */
+  if (rec && rec.me && rec.me.active && rec.me.uid === u.uid && (DB.sites || []).length) {
     Object.assign(ME, rec.me); READY = true;
     await startApp();
   } else gate('<p class="g-msg">Opening…</p>');
@@ -338,6 +349,7 @@ async function onProfile(p, u) {
   if (!READY) {
     gate('<p class="g-msg">Downloading your sites and entries…</p><p class="g-msg tiny">The first time on a phone this needs the internet.</p>');
     const ok = await initialSync(90000);
+    if (BLOCKED) return;   /* the rules screen is showing */
     if (!ok && !REMOTE.size) { gate(`<p class="g-msg">Could not download the data. Check the internet and try again.</p><p class="tiny">${escH(ERR)}</p><button class="btn" data-x="reload">Try again</button><button class="btn sec" data-x="signOut">Sign out</button>`); return; }
     DB = assemble(); READY = true; persist();
     if (!(DB.sites || []).length) { if (isAdmin()) { welcome(); return; } gateText('Not set up yet', 'The admin has not added any site yet. Try again later.', true); return; }
