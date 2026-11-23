@@ -9,10 +9,10 @@
    browser. Your data is protected by the login and the security rules.
    ============================================================ */
 window.FIREBASE_CONFIG = {
-  apiKey: "PASTE_API_KEY_HERE",
-  authDomain: "PASTE_AUTH_DOMAIN_HERE",
-  projectId: "PASTE_PROJECT_ID_HERE",
-  storageBucket: "PASTE_STORAGE_BUCKET_HERE",
-  messagingSenderId: "PASTE_SENDER_ID_HERE",
-  appId: "PASTE_APP_ID_HERE"
+  apiKey: "AIzaSyAN6Ykwrt7o63AuCD_DrrW_QdD7N4LtbHQ",
+  authDomain: "veershree-expense.firebaseapp.com",
+  projectId: "veershree-expense",
+  storageBucket: "veershree-expense.firebasestorage.app",
+  messagingSenderId: "886561852292",
+  appId: "1:886561852292:web:fdacc0c8379fc9c3da6bd1"
 };
