@@ -1,8 +1,8 @@
 /* Offline app shell for the Veershree Plot Expense Manager.
    The app's own files: network first (so updates show up), phone copy when there is no network.
    Firebase library, fonts and the Excel library: phone copy first (they never change). */
-const VERSION = 'vpem-1.0.0';
-const CORE = ['./', 'index.html', 'styles.css?v=1.0.0', 'app.js?v=1.0.0', 'cloud.js', 'oldcalc.js', 'firebase-config.js?v=1', 'manifest.webmanifest',
+const VERSION = 'vpem-1.0.1';
+const CORE = ['./', 'index.html', 'styles.css?v=1.0.1', 'app.js?v=1.0.1', 'cloud.js', 'oldcalc.js', 'firebase-config.js?v=1', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const SDK = 'https://www.gstatic.com/firebasejs/13.4.0/';
 const LIBS = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];
@@ -33,7 +33,7 @@ self.addEventListener('fetch', e => {
     e.respondWith((async () => {
       const c = await caches.open(VERSION);
       try {
-        const res = await timeout(4000, fetch(req));
+        const res = await timeout(4000, fetch(req, { cache: 'no-cache' })); // always check GitHub for a newer copy
         if (res && res.ok) c.put(req, res.clone());
         return res;
       } catch (err) {

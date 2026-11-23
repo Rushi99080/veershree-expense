@@ -906,7 +906,7 @@ function pgSetup() {
     <div><b>Site Manager app backup</b><p class="muted sm" style="margin:4px 0 8px">The .json backup from your Veershree Site Manager app: machines, machine log, diesel, expenses, murum, vendor and owner payments, rent bills and manager money.</p>
       <label class="btn file-btn">${svg('up')}Choose .json file<input type="file" accept=".json,application/json" data-file="json"></label></div>
     <div><b>Backup (.json)</b><p class="muted sm" style="margin:4px 0 8px">Save everything to one file. "Import backup" reads a backup of this app <b>or of the old app</b>, uploads it with the same IDs and fields, and then shows a check screen comparing every total.</p>
-      <div class="toolbar"><button class="btn" data-act="backup">${svg('dl')}Save backup</button><label class="btn file-btn">${svg('up')}Import backup<input type="file" accept=".json,application/json" data-file="restore"></label><label class="btn file-btn">Check against a backup<input type="file" accept=".json,application/json" data-file="check"></label></div></div>
+      <div class="toolbar"><button class="btn" data-act="backup">${svg('dl')}Save backup</button><label class="btn file-btn">${svg('up')}Import backup<input type="file" data-file="restore"></label><label class="btn file-btn">Check against a backup<input type="file" data-file="check"></label></div></div>
   </div></section>
   </div>
   <section class="card"><div class="card-h"><h2>Where your data is kept</h2></div><div class="card-b"><p style="margin:0">Entries are saved online in your own Firebase database, and each phone keeps a full copy so the app works without network on site. Deleted entries are kept (Recycle Bin), never removed.</p>
@@ -1845,10 +1845,14 @@ async function handleFile(input) {
   const file = input.files && input.files[0]; input.value = ''; if (!file) return;
   const kind = input.dataset.file;
   if (kind === 'xlsx') { if (/\.json$/i.test(file.name)) { toast('That is a .json file. Use the Site Manager backup button.'); return; } importExcel(file); return; }
-  let raw; try { raw = JSON.parse(await file.text()); } catch (e) { toast('This file is not a valid .json backup.'); return; }
+  let text = '';
+  try { text = String(await file.text()).replace(/^\uFEFF/, '').trim(); } catch (e) { fileProblem(file, 'The phone could not open this file (' + ((e && e.message) || e) + ').'); return; }
+  let raw; try { raw = JSON.parse(text); } catch (e) { fileProblem(file, 'This is not a backup file: it does not contain backup data.', text); return; }
+  if (raw && !raw.app && raw.settings && Array.isArray(raw.exp)) raw = { app: 'veershree-plot-expense', v: 1, data: raw }; // backup data without its wrapper
   if (!isAdmin()) { toast('Only the admin can import.'); return; }
-  if (kind === 'check') { if (raw && raw.app === 'veershree-plot-expense') runCheck(normalizeDB(raw.data), 'Check against ' + file.name, file.name); else toast('Choose a backup (.json) of this app or the old app.'); return; }
-  if (!Store.meta && !(raw && raw.app === 'veershree-plot-expense')) { toast('First import the backup of the old Plot Expense Manager.'); return; }
+  const isOld = raw && raw.app === 'veershree-plot-expense' && raw.data && typeof raw.data === 'object';
+  if (kind === 'check') { if (isOld) runCheck(normalizeDB(raw.data), 'Check against ' + file.name, file.name); else fileProblem(file, 'Choose a backup (.json) of this app or of the old Plot Expense Manager.', text); return; }
+  if (!Store.meta && !isOld) { fileProblem(file, 'This is not a backup of the old Plot Expense Manager. Take the backup in the old app with Reports → Backup (.json).', text); return; }
   if (kind === 'restore') restoreBackup(raw, file.name);
   else if (raw && raw.app === 'veershree-plot-expense') restoreBackup(raw, file.name);
   else importAppBackup(raw, file.name);
@@ -2250,7 +2254,7 @@ function pgWelcome() {
     <h2>Welcome, ${esc(ME.name)}</h2>
     <p>The online database is empty. Bring in the data from your current app first, so nothing is lost.</p>
     <ol class="gate-steps"><li>Open the <b>old</b> Plot Expense Manager on the phone where you entered your data.</li><li>Go to <b>Reports → Backup (.json)</b> and save the file.</li><li>Choose that file here. The app uploads it and then shows a check screen comparing every total.</li></ol>
-    <div class="toolbar"><label class="btn primary file-btn">${svg('up')}Choose backup file (.json)<input type="file" accept=".json,application/json" data-file="restore"></label></div>
+    <div class="toolbar"><label class="btn primary file-btn">${svg('up')}Choose backup file (.json)<input type="file" data-file="restore"></label></div>
     <div class="gate-sep"></div>
     <p class="muted sm">No old data? Start with the standard lists: your 11 sites, 6 people, 15 expense heads and the Waki machine list.</p>
     <button class="btn" data-act="startFresh">Start with the standard lists</button>
@@ -2265,6 +2269,11 @@ function startFresh() {
 /* ================= IMPORT OLD BACKUP + CHECK ================= */
 const valN = v => (v === '' || v == null) ? null : (typeof v === 'object' ? JSON.stringify(v) : String(v));
 const bizSame = (a, b) => { const ks = new Set([...Object.keys(a), ...Object.keys(b)].filter(k => k[0] !== '_' && k[0] !== '$')); for (const k of ks) if (valN(a[k]) !== valN(b[k])) return false; return true; };
+function fileProblem(file, msg, text) {
+  const start = text ? String(text).slice(0, 70) : '';
+  openModal({ title: 'Could not import this file', size: 'narrow',
+    body: `<p style="margin-top:0">${esc(msg)}</p><dl class="kv"><dt>File</dt><dd>${esc(file.name || '(no name)')}</dd><dt>Size</dt><dd>${(file.size / 1024).toLocaleString('en-IN', { maximumFractionDigits: 1 })} KB</dd><dt>Type</dt><dd>${esc(file.type || 'unknown')}</dd>${start ? `<dt>Starts with</dt><dd><code>${esc(start)}</code></dd>` : ''}</dl><p class="muted sm">Send Claude a screenshot of this screen.</p>` });
+}
 function dedupeIds(rows) {
   const seen = new Set(); let n = 0;
   const out = rows.map(r => { const k = docIdFor('x', r.id); if (seen.has(k)) { n++; const nr = { ...r, id: uid(), _origId: r.id }; seen.add(docIdFor('x', nr.id)); return nr; } seen.add(k); return r; });
@@ -2273,7 +2282,8 @@ function dedupeIds(rows) {
 const KIND = { exp: 'Expenses', mlog: 'Machine log', dsl: 'Diesel bills', vpay: 'Vendor payments', opay: 'Owner payments', bill: 'Rent bills', fund: 'Money received' };
 function importOldBackup(raw, fileName) {
   if (!isAdmin()) { toast('Only the admin can import.'); return; }
-  if (!navigator.onLine || !Store.online) { toast('Connect to the internet to import, so the check can read everything back.'); return; }
+  if (!navigator.onLine) { openModal({ title: 'No internet', size: 'narrow', body: '<p style="margin:0">Connect to the internet to import, so the check can read everything back from the online database.</p>' }); return; }
+  if (!Store.online) { openModal({ title: 'Not connected yet', size: 'narrow', body: `<p style="margin-top:0">The app is not connected to the online database yet. Wait until the badge next to the page title says <b>Saved</b>, then choose the file again.</p><p class="muted sm">Now: ${esc(syncState()[2])}</p>` }); return; }
   const inc = normalizeDB(raw.data);
   let dupes = 0;
   const plan = {};
