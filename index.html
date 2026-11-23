@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Veershree Plot Expense Manager</title>
+<meta name="theme-color" content="#132036">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Veershree">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css?v=1.0.0">
+</head>
+<body>
+<div class="shell">
+  <aside class="rail" id="rail" aria-label="Main menu">
+    <div class="brand"><b>VEERSHREE</b><span>Plot Expense Manager</span></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="rail-foot" id="railFoot"></div>
+  </aside>
+  <div class="scrim" id="scrim" data-act="closeMenu" hidden></div>
+  <div class="work">
+    <header class="top">
+      <div class="top-in">
+        <div class="top-title">
+          <button class="icon-btn only-m" data-act="menu" aria-label="Open menu"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+          <h1 id="pgTitle">Dashboard</h1>
+          <button class="sync" id="sync" data-act="sync" data-s="syncing" title="Where your data is saved">Syncing…</button>
+        </div>
+        <div class="filters">
+          <select id="fSite" data-f="site" aria-label="Site"></select>
+          <select id="fPeriod" data-f="period" aria-label="Period">
+            <option value="all">All time</option>
+            <option value="month">This month</option>
+            <option value="last">Last month</option>
+            <option value="3m">Last 3 months</option>
+            <option value="fy">This financial year</option>
+            <option value="custom">Custom dates</option>
+          </select>
+          <input type="date" id="fFrom" data-f="from" aria-label="From date" hidden>
+          <input type="date" id="fTo" data-f="to" aria-label="To date" hidden>
+          <button class="btn primary hide-m need-add" data-act="quickAdd"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New entry</button>
+        </div>
+      </div>
+    </header>
+    <main><div class="main-in" id="main"></div></main>
+  </div>
+</div>
+<button class="fab need-add" data-act="quickAdd" aria-label="New entry"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+<div id="modal" hidden></div>
+<div id="gate" hidden></div>
+<div id="toast" aria-live="polite"></div>
+<div id="tip" hidden></div>
+<script src="firebase-config.js?v=1"></script>
+<script type="module" src="app.js?v=1.0.0"></script>
+</body>
+</html>
