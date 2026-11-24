@@ -1,9 +1,10 @@
 rules_version = '2';
-// Site Manager (Veershree) — security rules, version 2 (adds the Supervisor app)
+// Site Manager (Veershree) — security rules, version 3 (Supervisor app + supervisor reminders)
 // Paste this whole file in Firebase console → Firestore Database → Rules → Publish.
 // Roles: admin (everything), manager (own sites, own cash book, cannot touch approved entries),
 //        accountant (sees everything, marks bills paid, records payments), viewer (read only),
-//        supervisor (Supervisor app: machine readings and diesel received on own sites, waiting for approval).
+//        supervisor (Supervisor app: machine readings and diesel received on own sites, waiting for approval),
+//        bot (the reminder robot on GitHub: reads only, sends the reminders).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -14,7 +15,8 @@ service cloud.firestore {
     function isAdmin() { return active() && me().role == 'admin'; }
     function isManager() { return active() && me().role == 'manager'; }
     function isAccountant() { return active() && me().role == 'accountant'; }
-    function seesAll() { return active() && me().role in ['admin', 'accountant', 'viewer']; }
+    function seesAll() { return active() && me().role in ['admin', 'accountant', 'viewer', 'bot']; }
+    function isBot() { return active() && me().role == 'bot'; }
     function myPerson() { return me().get('person', ''); }
     function managesSite(siteId) { return isManager() && siteId in me().get('sites', []); }
     function isSupervisor() { return active() && me().role == 'supervisor'; }
@@ -47,9 +49,29 @@ service cloud.firestore {
         && !changedKeys().hasAny(['_apBy', '_apByName', '_apAt', '_by', '_byName', '_at', '_s', '_i']);
     }
 
-    // the apps check this document to know these rules are published (version 2)
+    // the apps check these documents to know which rules are published
     match /sm_rules/v2 {
       allow get: if signedIn();
+    }
+    match /sm_rules/v3 {
+      allow get: if signedIn();
+    }
+
+    // reminders: a phone that wants notifications (one document per phone)
+    match /sm_push/{docId} {
+      allow read, delete: if isAdmin() || isBot() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, update: if active() && request.resource.data.uid == request.auth.uid;
+    }
+    // reminders: "done for today" of one site on one day
+    match /sm_days/{docId} {
+      allow read: if active();
+      allow create, update: if active() && request.resource.data.by == request.auth.uid
+        && (isAdmin() || supervisesSite(request.resource.data.site) || managesSite(request.resource.data.site));
+      allow delete: if false;
+    }
+    // reminders: what the robot did (and test requests from the admin)
+    match /sm_botlog/{docId} {
+      allow read, write: if isAdmin() || isBot();
     }
 
     // set once by the first person who opens the app (the owner)
@@ -62,8 +84,8 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow list: if isAdmin();
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin() || isBot());
+      allow list: if isAdmin() || isBot();
       allow create: if isAdmin()
         || (signedIn() && uid == request.auth.uid && isOwner()
             && request.resource.data.role == 'admin' && request.resource.data.active == true);

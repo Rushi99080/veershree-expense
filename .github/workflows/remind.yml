@@ -1,0 +1,31 @@
+# Supervisor reminders — the reminder robot.
+# Every 10 minutes (from about 5:30 AM to 12:20 AM India time) it checks whether each supervisor
+# has filled today's machine readings, and sends the phone notifications. Times are set in
+# Site Manager → Menu → Supervisor reminders. It needs the REMINDER_SECRET made there.
+name: Supervisor reminders
+on:
+  schedule:
+    - cron: '3-59/10 0-18 * * *'
+  workflow_dispatch:
+concurrency:
+  group: reminders
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/remind
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-audit --no-fund --silent
+        working-directory: .github/remind
+      - run: node remind.mjs
+        working-directory: .github/remind
+        env:
+          REMINDER_SECRET: ${{ secrets.REMINDER_SECRET }}

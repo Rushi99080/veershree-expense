@@ -146,6 +146,14 @@ details .field{margin:12px 0 0}
 .g-steps{color:var(--steel);line-height:1.7;padding-left:20px;margin:0 0 12px}
 
 .btn.scan{margin:0 0 6px}
+.daycard{display:flex;align-items:center;gap:12px;background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow);padding:12px 14px;margin:0 0 12px;border:1px solid var(--line)}
+.daycard>div{flex:1;min-width:0;display:flex;flex-direction:column}
+.daycard b{font-size:15px} .daycard span{font-size:12.5px;color:var(--steel);line-height:1.4}
+.daycard .btn{width:auto;height:44px;line-height:44px;padding:0 16px;margin:0;font-size:15px;flex:0 0 auto}
+.daycard.on{background:var(--ok-bg);border-color:transparent} .daycard.on b{color:var(--ok)}
+.remcard{background:var(--blue-bg);border-radius:var(--r);padding:12px 14px;margin:0 0 12px;display:flex;flex-direction:column;gap:4px}
+.remcard b{color:var(--blue);font-size:15px} .remcard span{font-size:13px;color:var(--ink-2);line-height:1.45}
+.remcard .btn{margin:8px 0 0;height:44px;line-height:44px}
 .read{background:var(--ok-bg);border-radius:10px;padding:9px 11px;font-size:13px;line-height:1.5;margin:6px 0 12px}
 #busy{position:fixed;inset:0;z-index:90;background:rgba(8,10,14,.55);display:flex;align-items:center;justify-content:center}
 #busy div{background:var(--surface);color:var(--ink);border-radius:16px;padding:18px 22px;font-weight:600;display:flex;align-items:center;gap:12px}
@@ -162,6 +170,6 @@ details .field{margin:12px 0 0}
 <div id="gate" hidden></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script src="../firebase-config.js?v=3"></script>
-<script type="module" src="sup.js?v=1.1.0"></script>
+<script type="module" src="sup.js?v=1.2.0"></script>
 </body>
 </html>

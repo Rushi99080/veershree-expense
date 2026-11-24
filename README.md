@@ -39,6 +39,14 @@ are filled in, never overwritten without a tick. The New machine / diesel / expe
 have **Read … photo** buttons that fill the form. Turn it on once in Menu → Photo reading with a free key from
 aistudio.google.com/apikey.
 
+## Supervisor reminders
+
+Menu → Supervisor reminders (admin): set the time (e.g. 7:00 PM to 10:00 PM). After that time, a supervisor whose
+working machines are not all filled — and who has not tapped **Done for today** in the Supervisor app — gets a phone
+notification every 10 minutes; the admin gets one. The checks run on GitHub (`.github/workflows/remind.yml`,
+`.github/remind/remind.mjs`) every 10 minutes and need the `REMINDER_SECRET` made by "Set up the reminder robot".
+Phones turn notifications on in the app (iPhone: from the Home Screen app).
+
 ## Phases
 
 1. Login, roles, approvals, offline sync, import of the old backup with a check screen ✅

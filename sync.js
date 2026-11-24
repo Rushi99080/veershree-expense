@@ -10,12 +10,13 @@
    ========================================================= */
 import { createCloud, safeId } from './cloud.js?v=3.1.0';
 import { pickPhoto, toJpeg, readMachinePhoto, readBillPhoto, matchMachine, matchName, testKey, aiConfig, aiForget } from './ai.js?v=1.0.0';
+import { pushSupport, pushState, enablePush, localTest, genVapid, randomPass, toB64u } from './push.js?v=1.0.0';
 
 const ENTRY_KEYS = ['machineLog', 'dieselLog', 'expenseLog', 'vendorPayments', 'murumLog', 'funds', 'ownerPayments', 'bills', 'reminders'];
 const LOCAL_KEYS = ['sites', 'mfunds', 'activeId', 'lastSnap', 'lastBackup', 'theme', 'lastNotif', 'lastNotify', 'userName', 'logo', 'billLogo', 'watermark', 'wmOpacity'];
 const KIND_LABEL = { machineLog: 'Machine entry', dieselLog: 'Diesel bill', expenseLog: 'Expense', vendorPayments: 'Vendor payment', murumLog: 'Murum', funds: 'Money received', ownerPayments: 'Owner payment', bills: 'Rent bill', reminders: 'Payment due date', mfund: 'Money to manager' };
-const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor' };
-const RULES_V = 'v2';   /* the rules version this build needs (firestore.rules → sm_rules/v2) */
+const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor', bot: 'Reminder robot' };
+const RULES_V = 'v3';   /* the rules version this build needs (firestore.rules → sm_rules/v2) */
 
 const ME = { uid: '', email: '', name: '', role: '', sites: [], person: '', active: false };
 let CLOUD = null, STOP = null, USERS = [], usersUnsub = null, profUnsub = null;
@@ -624,7 +625,7 @@ function openUsers() {
   const list = USERS.slice().sort((a, b) => (b.active !== false) - (a.active !== false) || String(a.name).localeCompare(String(b.name)));
   const sitesTxt = u => usesSites(u.role) ? ((u.sites || []).map(id => { const s = DB.sites.find(x => x.id === id); return s ? s.name : '?'; }).join(', ') || 'No site') : 'All sites';
   openSheet('Users', `<div id="smUsers"><div class="btnrow" style="margin-bottom:10px"><button class="btn" style="flex:1" data-x="userAdd">Add user</button></div>
-    <div class="card">${list.map(u => `<div class="row" data-x="userEdit" data-v="${escH(u.uid)}"><div class="main"><div class="ttl">${escH(u.name || '')} ${u.active === false ? '<span class="pill u">switched off</span>' : ''}</div><div class="sub">${escH(ROLE_LABEL[u.role] || u.role)} · ${escH(sitesTxt(u))}${u.person ? ' · cash book: ' + escH(u.person) : ''}<br>${escH(u.email || '')}</div></div></div>`).join('') || '<div class="pad tiny">Loading…</div>'}</div>
+    <div class="card">${list.map(u => `<div class="row"${u.role === 'bot' ? '' : ` data-x="userEdit" data-v="${escH(u.uid)}"`}><div class="main"><div class="ttl">${escH(u.name || '')} ${u.active === false ? '<span class="pill u">switched off</span>' : ''}</div><div class="sub">${escH(ROLE_LABEL[u.role] || u.role)} · ${escH(sitesTxt(u))}${u.person ? ' · cash book: ' + escH(u.person) : ''}<br>${escH(u.email || '')}</div></div></div>`).join('') || '<div class="pad tiny">Loading…</div>'}</div>
     <div class="shead">What each role can do</div><div class="card"><div class="pad tiny" style="line-height:1.7">
     <b>Admin</b> — everything: users, sites, settings, approve, delete, import, backup.<br><b>Site Manager</b> — sees and adds entries only for the sites you tick, and only their own cash book. Their entries wait for your approval; after approval they cannot change them.<br>
     <b>Accountant</b> — sees everything; marks expenses, diesel and murum as paid, records payments on rent bills, vendor and owner payments, and money received.<br><b>Viewer</b> — partners and owners: can look at everything, cannot change anything.<br><b>Supervisor</b> — uses the separate Supervisor app on site: fills machine readings, diesel filled and diesel received for the sites you tick. Sees nothing else. Entries wait for your approval.</div></div></div>`, null, null);
@@ -741,6 +742,7 @@ function menuHtml() {
     ${(isAdmin() || isMgr()) ? line('approvals', 'Waiting for approval', 'check', n ? `<span class="pill u">${n}</span>` : '') : ''}
     ${isAdmin() ? line('users', 'Users and roles', 'manager') : ''}
     ${isAdmin() ? line('photoAi', 'Photo reading (AI)', 'camera') : ''}
+    ${isAdmin() ? line('remind', 'Supervisor reminders', 'clock') : ''}
     ${line('account', 'My account · ' + escH(ROLE_LABEL[ME.role] || ''), 'person')}</div>`;
 }
 function sideHtml() {
@@ -993,6 +995,86 @@ function scanAdd() {
   say((parts.join(', ') || 'Nothing to change') + ((added || filled || replaced) && isMgr() ? ' — waiting for approval' : ''));
 }
 
+/* ================= supervisor reminders ================= */
+let REM = null;
+const ghSecretUrl = () => { const owner = location.hostname.split('.')[0], repo = location.pathname.split('/').filter(Boolean)[0] || ''; return `https://github.com/${owner}/${repo}/settings/secrets/actions`; };
+const whenTxt = ms => { if (!ms) return ''; const d = new Date(ms), mins = Math.round((Date.now() - ms) / 60000); return mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); };
+async function openRemind() {
+  let last = null;
+  try { REM = await CLOUD.getDocServer('sm_meta/remind') || {}; } catch (e) { REM = REM || {}; }
+  try { last = await CLOUD.getDocServer('sm_botlog/last'); } catch (e) { }
+  const R = REM, robot = !!R.vapidPublic;
+  const sup = pushSupport(), ps = await pushState();
+  const fresh = last && Date.now() - last.at < 40 * 60000 && last.ok !== false;
+  const phone = sup === 'ios-home' ? '<p class="tiny">On iPhone, notifications work only in the app opened from the <b>Home Screen</b>: Safari → Share → <b>Add to Home Screen</b>, then open it from there and come back here.</p>'
+    : sup === 'no' ? '<p class="tiny">This browser cannot show notifications.</p>'
+    : ps === 'on' ? '<div class="smok">Notifications are on for this phone.</div><button class="btn sec" style="width:100%;margin-top:8px" data-x="remTest">Send a test</button>'
+    : ps === 'blocked' ? '<p class="tiny">Notifications are <b>blocked</b> for this app. Allow them in the phone settings, then tap the button.</p><button class="btn" style="width:100%" data-x="remPush">Turn on notifications on this phone</button>'
+    : `<button class="btn" style="width:100%" data-x="remPush"${robot ? '' : ' disabled'}>Turn on notifications on this phone</button>${robot ? '' : '<p class="tiny">Set up the robot first.</p>'}`;
+  openSheet('Supervisor reminders', `<div class="card"><div class="pad">
+      <p class="tiny" style="margin:0 0 12px;line-height:1.6">If a supervisor has not filled today's machine readings by the reminder time, his phone gets a notification <b>every 10 minutes</b> until he fills every working machine or taps <b>Done for today</b>. You get one notification for that day.</p>
+      ${segField('Reminders', 'rm_on', ['On', 'Off'], R.on === false ? 'Off' : 'On')}
+      <div class="f2"><div class="field"><label>Remind from</label><input type="time" id="rm_t" value="${escH(R.time || '19:00')}"></div>
+        <div class="field"><label>Stop at</label><input type="time" id="rm_u" value="${escH(R.until || '22:00')}"></div></div>
+      <label class="smchk"><input type="checkbox" id="rm_a"${R.notifyAdmin === false ? '' : ' checked'}> Tell me when a supervisor has not filled</label>
+      <button class="btn" style="width:100%;margin-top:6px" data-x="remSave">Save</button>
+    </div></div>
+    <div class="card"><h3>Reminder robot<small>${robot ? 'set up' : 'one-time setup'}</small></h3><div class="pad">
+      ${robot ? `<div class="${fresh ? 'smok' : 'smread'}">${last ? `Last check ${escH(whenTxt(last.at))}: ${escH(last.note || '')}${last.sent ? ' &middot; ' + last.sent + ' sent' : ''}` : 'No check yet. Put the key on GitHub, then wait up to 10 minutes.'}</div>`
+        : '<p class="tiny" style="line-height:1.6">A free GitHub schedule checks every 10 minutes and sends the notifications. It is set up once: the app makes a key, you paste it on GitHub.</p>'}
+      <button class="btn${robot ? ' sec' : ''}" style="width:100%;margin-top:8px" data-x="remBot">${robot ? 'Make a new robot key' : 'Set up the reminder robot'}</button>
+      <p class="tiny" style="margin-top:8px">GitHub may run a few minutes late now and then.</p>
+    </div></div>
+    <div class="card"><h3>Notifications on this phone</h3><div class="pad">${phone}</div></div>`, null, null);
+}
+async function remSave() {
+  const t = val('rm_t') || '19:00', u = val('rm_u') || '22:00';
+  if (u <= t) return say('"Stop at" must be after "Remind from"');
+  REM = { ...(REM || {}), on: segVal('rm_on') !== 'Off', time: t, until: u, notifyAdmin: document.getElementById('rm_a').checked, every: 10 };
+  try { await CLOUD.commit([{ type: 'set', path: 'sm_meta/remind', data: REM }]); say(REM.on ? `Reminders on: from ${t} to ${u}, every 10 minutes` : 'Reminders are off'); closeSheet(); }
+  catch (e) { say('Could not save: ' + ((e && e.code) || e.message)); }
+}
+async function remBot() {
+  if (REM && REM.vapidPublic && !confirm('Make a new robot key? You will need to replace REMINDER_SECRET on GitHub with the new key.')) return;
+  busy(true, 'Setting up the robot…');
+  try {
+    const keys = await genVapid(), pass = randomPass(28);
+    const email = 'reminder.robot.' + Math.random().toString(36).slice(2, 8) + '@veershree-expense.firebaseapp.com';
+    const uid = await CLOUD.createUser(email, pass);
+    await CLOUD.saveUser(uid, { name: 'Reminder robot', email, role: 'bot', active: true, sites: [], createdAt: Date.now(), createdBy: ME.uid });
+    if (REM && REM.botUid && REM.botUid !== uid) { try { await CLOUD.saveUser(REM.botUid, { active: false }); } catch (e) { } }
+    REM = { ...(REM || {}), on: !(REM && REM.on === false), time: (REM && REM.time) || '19:00', until: (REM && REM.until) || '22:00',
+      notifyAdmin: !(REM && REM.notifyAdmin === false), every: 10, vapidPublic: keys.pub, botUid: uid, botEmail: email, keyAt: Date.now() };
+    await CLOUD.commit([{ type: 'set', path: 'sm_meta/remind', data: REM }]);
+    const cfg = window.FIREBASE_CONFIG || {};
+    const secret = toB64u(JSON.stringify({ v: 1, project: cfg.projectId, apiKey: cfg.apiKey, email, password: pass, vapidPublic: keys.pub, vapidPrivate: keys.priv, subject: appBase() }));
+    busy(false); closeSheet();
+    openSheet('Last step: the key on GitHub', `<div class="card"><div class="pad" style="line-height:1.6">
+      <ol class="g-steps" style="color:var(--ink-2);font-size:14.5px;padding-left:20px;margin:0 0 12px">
+        <li>Tap <b>Copy the key</b>.</li>
+        <li>Tap <b>Open GitHub</b> (sign in if asked), then <b>New repository secret</b>.<br><span class="tiny">Already there from before? Tap <b>REMINDER_SECRET</b> → pencil → paste → <b>Update secret</b>.</span></li>
+        <li>Name: <b>REMINDER_SECRET</b>. Paste the key in <b>Secret</b>. Tap <b>Add secret</b>.</li>
+        <li>Come back here and turn on notifications on this phone. Within about 10 minutes <b>Last check</b> shows in Supervisor reminders.</li></ol>
+      <button class="btn" style="width:100%" data-x="copy" data-v="${escH(secret)}">Copy the key</button>
+      <a class="btn sec" style="width:100%;margin-top:8px;display:block;text-align:center;text-decoration:none" href="${ghSecretUrl()}" target="_blank" rel="noopener">Open GitHub</a>
+      <button class="btn sec" style="width:100%;margin-top:8px" data-x="copy" data-v="REMINDER_SECRET">Copy the name REMINDER_SECRET</button>
+      <p class="tiny" style="margin-top:10px">The key is shown only now and is not kept in the app. If it is lost, make a new key.</p>
+      <button class="btn sec" style="width:100%;margin-top:4px" data-x="remind">Back to reminders</button></div></div>`, null, null);
+  } catch (e) { busy(false); say('Could not set up the robot: ' + ((e && (e.code || e.message)) || 'error')); }
+}
+async function remPush() {
+  try {
+    if (!REM || !REM.vapidPublic) REM = await CLOUD.getDocServer('sm_meta/remind') || {};
+    await enablePush(CLOUD, ME, REM.vapidPublic, 'site-manager');
+    say('Notifications are on for this phone'); closeSheet(); openRemind();
+  } catch (e) { say((e && (e.code === 'permission-denied' ? 'Update the Firebase rules first (see the card on Home).' : e.message)) || 'Could not turn on'); }
+}
+async function remTest() {
+  try { await localTest('Site Manager', 'Notifications show on this phone.'); } catch (e) { }
+  try { await CLOUD.commit([{ type: 'set', path: 'sm_botlog/test', data: { uid: ME.uid, at: Date.now() } }]); say('Shown here now. The robot sends one more within about 10 minutes.'); }
+  catch (e) { say('Could not ask the robot: ' + ((e && e.code) || e.message)); }
+}
+
 /* the admin switches photo reading on with a free Google key */
 async function openPhotoAi(lead) {
   let cfg = null; try { cfg = await aiConfig(CLOUD, true); } catch (e) { }
@@ -1029,7 +1111,7 @@ document.addEventListener('click', async e => {
   if (x) {
     e.preventDefault(); e.stopPropagation();
     const a = x.dataset.x, v = x.dataset.v;
-    if (x.closest('.sheet') && ['approvals', 'users', 'account', 'photoAi'].includes(a)) closeSheet();
+    if (x.closest('.sheet') && ['approvals', 'users', 'account', 'photoAi', 'remind'].includes(a)) closeSheet();
     switch (a) {
       case 'pill': { const [, , t] = pillState(); if (ERR) { ERR = ''; startListeners(); } say(t); break; }
       case 'approvals': openApprovals(); break;
@@ -1057,6 +1139,11 @@ document.addEventListener('click', async e => {
       case 'rules': openRulesSheet(); break;
       case 'rulesCheck': { const ok = await CLOUD.rulesOk(RULES_V); if (ok) { RULES_OLD = false; closeSheet(); say('The new rules are published'); rerender(); } else say(ok === false ? 'Still the old rules. Publish, wait a minute, then check again.' : 'No internet — try again.'); break; }
       case 'photoAi': openPhotoAi(''); break;
+      case 'remind': openRemind(); break;
+      case 'remSave': remSave(); break;
+      case 'remBot': remBot(); break;
+      case 'remPush': remPush(); break;
+      case 'remTest': remTest(); break;
       case 'aiSave': aiSave(); break;
       case 'aiOff': aiOff(); break;
       case 'scanForm': scanForm(v); break;

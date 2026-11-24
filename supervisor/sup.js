@@ -6,8 +6,9 @@
    ========================================================= */
 import { createCloud, safeId } from '../cloud.js?v=3.1.0';
 import { pickPhoto, toJpeg, readMachinePhoto, readBillPhoto, matchMachine, matchName } from '../ai.js?v=1.0.0';
+import { pushSupport, pushState, enablePush, localTest } from '../push.js?v=1.0.0';
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const RULES_V = 'v2';
 const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor' };
 const CAN_ENTER = ['supervisor', 'manager', 'admin'];
@@ -43,6 +44,7 @@ let SK = '', DATE = today(), TAB = 'machines', FILTER = 'all', SEARCH = '';
 let DAY = { machineLog: [], dieselLog: [] }, DAYMETA = { machineLog: null, dieselLog: null };
 let LAST = new Map(), SEEN = new Set(), LASTKEY = '', LASTBUSY = false;
 let PEND = 0, ONLINE = navigator.onLine, STARTED = false, SEQ = 0;
+let REM = null, PUSHST = 'off', DAYDONE = null;   // reminder settings, this phone's notifications, today's "done" mark
 
 const site = () => SITES.get(SK) || null;
 const activeMachines = s => (s && s.machines || []).filter(m => m && m.no && !m.removed);
@@ -120,6 +122,12 @@ async function onProfile(p, u) {
   if (ok === false) return gateRules(ME.role === 'admin');
   STARTED = true;
   watchSites();
+  loadRemind();
+}
+async function loadRemind() {
+  try { REM = await CLOUD.getDocServer('sm_meta/remind'); } catch (e) { REM = null; }
+  try { PUSHST = await pushState(); } catch (e) { PUSHST = 'off'; }
+  render();
 }
 function stopAll() { sitesUnsub.forEach(f => { try { f(); } catch (e) { } }); sitesUnsub = []; stopDay(); SITES = new Map(); }
 function stopDay() { dayUnsub.forEach(f => { try { f(); } catch (e) { } }); dayUnsub = []; }
@@ -153,6 +161,8 @@ function openDay() {
   stopDay();
   DAY = { machineLog: [], dieselLog: [] }; DAYMETA = { machineLog: null, dieselLog: null };
   const sk = SK, date = DATE;
+  DAYDONE = null;
+  dayUnsub.push(CLOUD.watchDoc('sm_days/' + sk + '_' + date, d => { if (sk === SK && date === DATE) { DAYDONE = d; render(); } }, () => { }));
   for (const coll of ['machineLog', 'dieselLog']) {
     dayUnsub.push(CLOUD.watchDay(sk, coll, date, (list, meta) => {
       if (sk !== SK || date !== DATE) return;
@@ -264,6 +274,7 @@ function machinesHtml(s) {
   };
   const others = ents.filter(e => !ms.some(m => sameNo(m.no, e.data.machineNo)));
   return `<section class="sum"><div><b>${filled}<small>/${ms.length}</small></b><span>Machines filled</span></div><div><b>${dec(hrs, 1)}</b><span>Hours</span></div><div><b>${dec(dsl, 0)}<small> L</small></b><span>Diesel filled</span></div></section>
+    ${todayHtml(filled, ms.length)}
     <div class="tools"><input id="search" type="search" placeholder="Search machine, type or operator" autocomplete="off">
       <div class="chips">${[['all', 'All'], ['todo', 'Not filled'], ['done', 'Filled']].map(([v, l]) => `<button class="${FILTER === v ? 'on' : ''}" data-a="filter" data-v="${v}">${l}${v === 'todo' ? ' (' + (ms.length - filled) + ')' : ''}</button>`).join('')}</div></div>
     ${groups.map(g => `<h3 class="gh">${esc(g.t)} <small>${g.l.length}</small></h3><div class="card">${g.l.map(row).join('')}</div>`).join('') || `<div class="card empty">${ms.length ? 'No machine matches.' : 'No machines in this site yet. The admin adds them in Site Manager → Masters.'}</div>`}
@@ -271,6 +282,38 @@ function machinesHtml(s) {
     <button class="btn wa" data-a="report">Share day report on WhatsApp</button>
     ${LASTBUSY ? '<p class="tiny center">Looking up the last readings…</p>' : ''}`;
 }
+/* today: "Done for today", and the reminder switch on this phone */
+function todayHtml(filled, total) {
+  if (DATE !== today() || ME.role === 'admin') return '';
+  const remOn = REM && REM.on !== false && REM.vapidPublic;
+  const sup = pushSupport();
+  let rem = '';
+  if (remOn && PUSHST !== 'on') {
+    rem = sup === 'ios-home' ? `<div class="remcard"><b>Turn on reminders</b><span>On iPhone: tap Share → <b>Add to Home Screen</b>, open the app from the Home Screen, then turn reminders on.</span></div>`
+      : sup === 'no' ? '' : `<div class="remcard"><b>Turn on reminders</b><span>Get a notification at ${esc(REM.time || '19:00')} if today's readings are not filled.</span><button class="btn" data-a="remOn">Turn on reminders</button></div>`;
+  }
+  const done = DAYDONE && DAYDONE.done;
+  return `${rem}<div class="daycard${done ? ' on' : ''}">${done
+    ? `<div><b>✓ Done for today</b><span>${esc(DAYDONE.byName || '')}${remOn ? ' · no more reminders today' : ''}</span></div><button class="btn sec" data-a="undoDay">Undo</button>`
+    : `<div><b>${filled} of ${total} machines filled</b><span>${remOn ? 'Reminders every 10 min from ' + esc(REM.time || '19:00') + ' until done.' : 'Tap when every working machine is filled.'}</span></div><button class="btn" data-a="doneDay">Done for today</button>`}</div>`;
+}
+function markDay(done) {
+  const s = site(); if (!s) return;
+  const ms = activeMachines(s), ents = live(DAY.machineLog);
+  const filled = ms.filter(m => ents.some(e => sameNo(e.data.machineNo, m.no))).length;
+  if (done && filled < ms.length && !confirm(`${ms.length - filled} machine${ms.length - filled === 1 ? ' has' : 's have'} no reading today. Mark the day done (they did not work)?`)) return;
+  track(CLOUD.commit([{ type: 'set', path: `sm_days/${SK}_${DATE}`, data: { site: String(s.id), date: DATE, done: !!done, by: ME.uid, byName: ME.name, at: Date.now(), filled, total: ms.length } }]), done ? 'Done for today — no more reminders today' : 'Undone');
+}
+async function remOn() {
+  try {
+    if (!REM || !REM.vapidPublic) REM = await CLOUD.getDocServer('sm_meta/remind');
+    await enablePush(CLOUD, ME, REM && REM.vapidPublic, 'supervisor');
+    PUSHST = 'on'; render();
+    toast('Reminders are on for this phone');
+    try { await localTest('Reminders are on', 'You will get a reminder at ' + ((REM && REM.time) || '19:00') + ' if readings are not filled.'); } catch (e) { }
+  } catch (e) { toast((e && (e.code === 'permission-denied' ? 'The admin has to update the Firebase rules first.' : e.message)) || 'Could not turn on reminders'); }
+}
+
 function dieselHtml(s) {
   const ents = live(DAY.dieselLog);
   const got = ents.reduce((a, e) => a + num(e.data.litres), 0);
@@ -483,6 +526,9 @@ document.addEventListener('click', async ev => {
     case 'dieselAdd': dieselSheet(null); break;
     case 'saveDiesel': saveDiesel(); break;
     case 'scanMeter': scanMeter(); break;
+    case 'doneDay': markDay(true); break;
+    case 'undoDay': markDay(false); break;
+    case 'remOn': remOn(); break;
     case 'scanBill': scanBill(); break;
     case 'delEntry': if (EDIT && EDIT.entry && confirm('Delete this entry?')) { deleteEntry(EDIT.entry); EDIT = null; closeSheet(); } break;
     case 'report': { const t = reportText(); closeSheet(); window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank'); break; }

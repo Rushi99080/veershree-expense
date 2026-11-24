@@ -1,8 +1,8 @@
 /* Offline app shell for the Veershree Supervisor app.
    Its own files and the shared ones one level up (cloud.js, firebase-config.js): network first, phone copy offline.
    Firebase library: phone copy first. Login and database traffic is never touched here. */
-const VERSION = 'vsup-1.1.0';
-const CORE = ['./', 'index.html', 'sup.js?v=1.1.0', '../cloud.js?v=3.1.0', '../ai.js?v=1.0.0', '../firebase-config.js?v=3', 'manifest.webmanifest',
+const VERSION = 'vsup-1.2.0';
+const CORE = ['./', 'index.html', 'sup.js?v=1.2.0', '../cloud.js?v=3.1.0', '../ai.js?v=1.0.0', '../push.js?v=1.0.0', '../firebase-config.js?v=3', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const SDK = 'https://www.gstatic.com/firebasejs/13.4.0/';
 const LIBS = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];
@@ -53,4 +53,24 @@ self.addEventListener('fetch', e => {
       catch (err) { return Response.error(); }
     })());
   }
+});
+
+/* reminders from the reminder robot */
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = { title: 'Reminder', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Reminder', {
+    body: d.body || '', tag: d.tag || 'remind', renotify: true, requireInteraction: true,
+    icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', vibrate: [500, 150, 500, 150, 900],
+    data: { url: d.url || self.registration.scope }
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || self.registration.scope;
+  e.waitUntil((async () => {
+    const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) if (c.url.startsWith(url) && 'focus' in c) return c.focus();
+    return clients.openWindow(url);
+  })());
 });
