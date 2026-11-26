@@ -8,7 +8,7 @@
    - approvals, users, my account, import of the old backup with a check screen
    The app's own screens and calculations are not changed.
    ========================================================= */
-import { createCloud, safeId } from './cloud.js?v=3.1.0';
+import { createCloud, safeId } from './cloud.js?v=3.2.0';
 import { pickPhoto, toJpeg, readMachinePhoto, readBillPhoto, matchMachine, matchName, testKey, aiConfig, aiForget } from './ai.js?v=1.0.0';
 import { pushSupport, pushState, enablePush, localTest, genVapid, randomPass, toB64u } from './push.js?v=1.0.0';
 
@@ -16,7 +16,7 @@ const ENTRY_KEYS = ['machineLog', 'dieselLog', 'expenseLog', 'vendorPayments', '
 const LOCAL_KEYS = ['sites', 'mfunds', 'activeId', 'lastSnap', 'lastBackup', 'theme', 'lastNotif', 'lastNotify', 'userName', 'logo', 'billLogo', 'watermark', 'wmOpacity'];
 const KIND_LABEL = { machineLog: 'Machine entry', dieselLog: 'Diesel bill', expenseLog: 'Expense', vendorPayments: 'Vendor payment', murumLog: 'Murum', funds: 'Money received', ownerPayments: 'Owner payment', bills: 'Rent bill', reminders: 'Payment due date', mfund: 'Money to manager' };
 const ROLE_LABEL = { admin: 'Admin', manager: 'Site Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor', bot: 'Reminder robot' };
-const RULES_V = 'v3';   /* the rules version this build needs (firestore.rules → sm_rules/v2) */
+const RULES_V = 'v4';   /* the rules version this build needs (firestore.rules → sm_rules/v2) */
 
 const ME = { uid: '', email: '', name: '', role: '', sites: [], person: '', active: false };
 let CLOUD = null, STOP = null, USERS = [], usersUnsub = null, profUnsub = null;
@@ -400,7 +400,7 @@ async function checkRules() {
 async function openRulesSheet() {
   let rules = '';
   try { const r = await fetch('firestore.rules', { cache: 'no-cache' }); if (r.ok) rules = await r.text(); } catch (e) { }
-  openSheet('Update the Firebase rules', `<div class="card"><div class="pad"><p class="tiny" style="line-height:1.7">This version of the app (with the <b>Supervisor app</b>) needs the new security rules in Firebase. Until then supervisors cannot open their app. Everything else keeps working.</p>
+  openSheet('Update the Firebase rules', `<div class="card"><div class="pad"><p class="tiny" style="line-height:1.7">This version of the app (with the <b>Manager app</b>) needs the new security rules in Firebase. Until then managers cannot remove a wrong entry from their app. Everything else keeps working.</p>
     <ol class="g-steps"><li>Tap <b>Copy the new rules</b>.</li><li>Open <b>console.firebase.google.com</b> → <b>veershree-expense</b> → <b>Firestore Database</b> → <b>Rules</b>.</li><li>Delete everything in the box, paste, tap <b>Publish</b>.</li><li>Wait one minute and tap <b>Check again</b>.</li></ol>
     ${rules ? `<button class="btn" style="width:100%" data-x="copy" data-v="${escH(rules)}">Copy the new rules</button>` : `<p class="tiny">Rules file: <a href="${RULES_URL}" target="_blank" rel="noopener">firestore.rules</a> (open, tap Raw, copy all).</p>`}
     <button class="btn sec" style="width:100%;margin-top:8px" data-x="rulesCheck">Check again</button></div></div>`, null, null);
@@ -627,7 +627,7 @@ function openUsers() {
   openSheet('Users', `<div id="smUsers"><div class="btnrow" style="margin-bottom:10px"><button class="btn" style="flex:1" data-x="userAdd">Add user</button></div>
     <div class="card">${list.map(u => `<div class="row"${u.role === 'bot' ? '' : ` data-x="userEdit" data-v="${escH(u.uid)}"`}><div class="main"><div class="ttl">${escH(u.name || '')} ${u.active === false ? '<span class="pill u">switched off</span>' : ''}</div><div class="sub">${escH(ROLE_LABEL[u.role] || u.role)} · ${escH(sitesTxt(u))}${u.person ? ' · cash book: ' + escH(u.person) : ''}<br>${escH(u.email || '')}</div></div></div>`).join('') || '<div class="pad tiny">Loading…</div>'}</div>
     <div class="shead">What each role can do</div><div class="card"><div class="pad tiny" style="line-height:1.7">
-    <b>Admin</b> — everything: users, sites, settings, approve, delete, import, backup.<br><b>Site Manager</b> — sees and adds entries only for the sites you tick, and only their own cash book. Their entries wait for your approval; after approval they cannot change them.<br>
+    <b>Admin</b> — everything: users, sites, settings, approve, delete, import, backup.<br><b>Site Manager</b> — sees and adds entries only for the sites you tick, and only their own cash book. Their entries wait for your approval; after approval they cannot change them. They can also use the separate <b>Manager app</b> to fill their expenses and money received.<br>
     <b>Accountant</b> — sees everything; marks expenses, diesel and murum as paid, records payments on rent bills, vendor and owner payments, and money received.<br><b>Viewer</b> — partners and owners: can look at everything, cannot change anything.<br><b>Supervisor</b> — uses the separate Supervisor app on site: fills machine readings, diesel filled and diesel received for the sites you tick. Sees nothing else. Entries wait for your approval.</div></div></div>`, null, null);
 }
 function userForm(u) {
@@ -669,9 +669,9 @@ async function userSave() {
   } catch (e) { say(authMsg(e)); }
 }
 function shareLogin(name, email, pass, role) {
-  const sup = role === 'supervisor';
-  const url = appBase() + (sup ? 'supervisor/' : '');
-  const text = `*${sup ? 'Supervisor' : 'Site Manager'} — Veershree*\nHi ${name}, here is your login.\nOpen: ${url}\nEmail: ${email}\nPassword: ${pass}\nOn iPhone: open the link in Safari → Share → Add to Home Screen. On Android: open in Chrome → ⋮ → Add to Home screen.`;
+  const sup = role === 'supervisor', mgr = role === 'manager';
+  const url = appBase() + (sup ? 'supervisor/' : mgr ? 'manager/' : '');
+  const text = `*${sup ? 'Supervisor' : mgr ? 'Manager app' : 'Site Manager'} — Veershree*\nHi ${name}, here is your login.\nOpen: ${url}${mgr ? '\n(fill your expenses and money received here)' : ''}\nEmail: ${email}\nPassword: ${pass}${mgr ? '\nFull Site Manager app, same login: ' + appBase() : ''}\nOn iPhone: open the link in Safari → Share → Add to Home Screen. On Android: open in Chrome → ⋮ → Add to Home screen.`;
   openSheet('Login created', `<div class="card"><div class="pad"><p class="tiny">Send these details to <b>${escH(name)}</b>:</p><pre class="smpre">${escH(text)}</pre>
     <a class="btn" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">Send on WhatsApp</a>
     <button class="btn sec sm" style="width:100%;margin-top:8px" data-x="copy" data-v="${escH(text)}">Copy</button></div></div>`, null, null);
@@ -743,6 +743,7 @@ function menuHtml() {
     ${isAdmin() ? line('users', 'Users and roles', 'manager') : ''}
     ${isAdmin() ? line('photoAi', 'Photo reading (AI)', 'camera') : ''}
     ${isAdmin() ? line('remind', 'Supervisor reminders', 'clock') : ''}
+    ${(isAdmin() || isMgr()) ? line('mgrApp', 'Manager app (expenses from phone)', 'wallet') : ''}
     ${line('account', 'My account · ' + escH(ROLE_LABEL[ME.role] || ''), 'person')}</div>`;
 }
 function sideHtml() {
@@ -1140,6 +1141,7 @@ document.addEventListener('click', async e => {
       case 'rulesCheck': { const ok = await CLOUD.rulesOk(RULES_V); if (ok) { RULES_OLD = false; closeSheet(); say('The new rules are published'); rerender(); } else say(ok === false ? 'Still the old rules. Publish, wait a minute, then check again.' : 'No internet — try again.'); break; }
       case 'photoAi': openPhotoAi(''); break;
       case 'remind': openRemind(); break;
+      case 'mgrApp': closeSheet(); window.open(appBase() + 'manager/', '_blank'); break;
       case 'remSave': remSave(); break;
       case 'remBot': remBot(); break;
       case 'remPush': remPush(); break;

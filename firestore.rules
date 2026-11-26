@@ -1,7 +1,8 @@
 rules_version = '2';
-// Site Manager (Veershree) — security rules, version 3 (Supervisor app + supervisor reminders)
+// Site Manager (Veershree) — security rules, version 4 (Supervisor app, reminders, Manager app)
 // Paste this whole file in Firebase console → Firestore Database → Rules → Publish.
-// Roles: admin (everything), manager (own sites, own cash book, cannot touch approved entries),
+// Roles: admin (everything), manager (own sites, own cash book, cannot touch approved entries; may remove
+//        an entry he made himself while it is still pending — Manager app),
 //        accountant (sees everything, marks bills paid, records payments), viewer (read only),
 //        supervisor (Supervisor app: machine readings and diesel received on own sites, waiting for approval),
 //        bot (the reminder robot on GitHub: reads only, sends the reminders).
@@ -31,11 +32,13 @@ service cloud.firestore {
       let d = request.resource.data;
       return stamped() && d._by == request.auth.uid && !('_del' in d);
     }
-    // a manager may change a not-yet-approved entry; it stays pending and keeps who made it
+    // a manager may change a not-yet-approved entry; it stays pending and keeps who made it.
+    // He may also remove (soft) one he made himself, until it is approved.
     function managerEdit() {
       let d = request.resource.data;
       return stamped() && resource.data.get('_appr', '') != 'approved' && resource.data.get('_del', false) != true
-        && d._appr == 'pending' && d._by == resource.data._by && d._c == resource.data._c && !('_del' in d)
+        && d._appr == 'pending' && d._by == resource.data._by && d._c == resource.data._c
+        && (!('_del' in d) || (d._del == true && resource.data._by == request.auth.uid))
         && !changedKeys().hasAny(['_apBy', '_apByName', '_apAt', '_by', '_byName', '_at', '_s', '_i']);
     }
 
@@ -54,6 +57,9 @@ service cloud.firestore {
       allow get: if signedIn();
     }
     match /sm_rules/v3 {
+      allow get: if signedIn();
+    }
+    match /sm_rules/v4 {
       allow get: if signedIn();
     }
 

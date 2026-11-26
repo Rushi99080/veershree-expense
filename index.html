@@ -245,6 +245,15 @@ a{color:var(--rent)}
   font-size:13.5px;font-weight:600;line-height:1.2;white-space:nowrap;
 }
 .chip.on{background:var(--accent-strong);border-color:var(--accent-strong);color:var(--on-accent)}
+.ppper{padding:0 0 12px;margin:0 calc(-1 * var(--pad-x));padding-left:var(--pad-x);padding-right:var(--pad-x)}
+.ppback{margin:0 0 2px}
+.pcat{padding:10px 16px 11px;border-bottom:1px solid var(--line-2)}
+.pcat:last-of-type{border-bottom:0}
+.pc1{display:flex;align-items:baseline;gap:10px}
+.pc1 span{flex:1;min-width:0;font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc1 b{font-weight:650;font-variant-numeric:tabular-nums;font-size:14.5px}
+.pc1 em{font-style:normal;font-size:12px;color:var(--steel);width:34px;text-align:right}
+.pcat .mbar{max-width:none;margin-top:6px;height:5px}
 .chipbar .chip{background:var(--chrome-2);border-color:var(--chrome-line);color:#C4CAD4}
 .chipbar .chip.on{background:var(--gold);border-color:var(--gold);color:#17130A}
 
@@ -296,13 +305,13 @@ main{
 }
 .hero .big small{font-size:.5em;color:var(--gold);margin-right:5px;font-weight:600;letter-spacing:0;vertical-align:.34em}
 .hsplit{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
-.hsplit div{
+.hsplit>div{
   background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.07);
   border-radius:12px;padding:10px 11px;min-width:0;
 }
 .hsplit .k{font-size:10.5px;color:#A3ABB8;font-weight:600;letter-spacing:.05em;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hsplit .v{
-  font-size:17px;font-weight:650;margin-top:3px;letter-spacing:-.01em;
+  font-size:clamp(14px,4.1vw,17px);font-weight:650;margin-top:3px;letter-spacing:-.01em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;
 }
 /* composition bar + legend (dashboard hero) */
@@ -1262,7 +1271,7 @@ function greeting() {
 }
 
 /* ---------- storage ---------- */
-const APP_VERSION = '3.4 · Supervisor reminders';
+const APP_VERSION = '3.5 · Person-wise and Manager app';
 const MODES = ['Cash', 'Online / UPI', 'RTGS / NEFT', 'Cheque'];
 let KEY = 'vsms2:db';   /* set per login by sync.js */
 
@@ -1408,8 +1417,8 @@ function normSite(s) {
 function mgrLink() {
   try {
     const u = location.href.split('#')[0].split('?')[0];
-    return u.replace(/[^\/]*$/, '') + 'manager.html';
-  } catch (e) { return 'manager.html'; }
+    return u.replace(/[^\/]*$/, '') + 'manager/';
+  } catch (e) { return 'manager/'; }
 }
 
 /* ---------- MANAGERS (site-nirapeksh) ---------- */
@@ -2180,6 +2189,7 @@ function allTabs(s) {
   if (m.murum) out.push(['murum', 'Murum']);
   if (m.diesel !== false) out.push(['diesel', 'Diesel']);
   if (m.vendor !== false) out.push(['vendor', 'Vendor']);
+  out.push(['people', 'Person-wise']);
   out.push(['manager', 'Managers']);
   out.push(['more', 'More']);
   return out;
@@ -2195,9 +2205,9 @@ function barTabs(s) {
     : m.diesel !== false ? ['diesel', 'Diesel'] : ['manager', 'Managers'];
   return [['dash', 'Home'], ['expense', 'Expense'], ['__add', 'Add'], second, ['__menu', 'Menu']];
 }
-const TAB_TITLE = { dash: 'Dashboard', machine: 'Machine', expense: 'Expenses', murum: 'Murum', diesel: 'Diesel', vendor: 'Vendors', manager: 'Managers', more: 'More' };
-const TAB_ICON = { dash: 'home', machine: 'machine', expense: 'expense', murum: 'murum', diesel: 'diesel', vendor: 'vendor', manager: 'manager', more: 'gear' };
-const TAB_TINT = { dash: 'c6', machine: 'c2', expense: 'c0', murum: 'c4', diesel: 'c7', vendor: 'c3', manager: 'c1', more: 'c6' };
+const TAB_TITLE = { dash: 'Dashboard', machine: 'Machine', expense: 'Expenses', murum: 'Murum', diesel: 'Diesel', vendor: 'Vendors', people: 'Person-wise', manager: 'Managers', more: 'More' };
+const TAB_ICON = { dash: 'home', machine: 'machine', expense: 'expense', murum: 'murum', diesel: 'diesel', vendor: 'vendor', people: 'person', manager: 'manager', more: 'gear' };
+const TAB_TINT = { dash: 'c6', machine: 'c2', expense: 'c0', murum: 'c4', diesel: 'c7', vendor: 'c3', people: 'c5', manager: 'c1', more: 'c6' };
 
 /* ---------- small visual helpers ---------- */
 const initials = n => String(n || '').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || 'SM';
@@ -2269,7 +2279,8 @@ function subsFor(s, t) {
     .concat(m.owner ? [['owner', 'Owner']] : [])
     .concat([['mast', 'Machines']]);
   if (t === 'diesel') return [['log', 'Purchases'], ['sum', 'Summary']].concat(m.stock ? [['stock', 'Stock']] : []);
-  if (t === 'more') return [['excel', 'Excel'], ['set', 'Settings']].concat(m.funds ? [['funds', 'Money received']] : []).concat([['person', 'Person-wise'], ['mast', 'Masters'], ['sites', 'Sites']]);
+  if (t === 'more') return [['excel', 'Excel'], ['set', 'Settings']].concat(m.funds ? [['funds', 'Money received']] : []).concat([['mast', 'Masters'], ['sites', 'Sites']]);
+  if (t === 'people') return [['all', 'All sites']].concat((DB.sites || []).map(x => [x.id, x.name]));
   return SUBS[t];
 }
 const SUBS = {
@@ -2277,7 +2288,7 @@ const SUBS = {
   diesel: [['log', 'Purchases'], ['sum', 'Summary'], ['stock', 'Stock']],
   expense: [['log', 'Entries'], ['sum', 'Summary']],
   vendor: [['pend', 'Pending'], ['due', 'Due dates'], ['pay', 'Payments'], ['sum', 'Summary']],
-  more: [['excel', 'Excel Sync'], ['person', 'Person-wise'], ['mast', 'Masters'], ['sites', 'Sites']]
+  more: [['excel', 'Excel Sync'], ['mast', 'Masters'], ['sites', 'Sites']]
 };
 /* tabs that are a single screen with no chips */
 SUBS.manager = null;
@@ -2327,6 +2338,7 @@ function pageHead(s) {
     else if (TAB === 'murum') line = n((s.murumLog || []).length, 'entry', 'entries');
     else if (TAB === 'vendor') line = n(allVendors(s).length, 'vendor', 'vendors') + ' · credit, due dates and payments';
     else if (TAB === 'manager') line = n(mgrList().length, 'manager', 'managers') + ' · across all sites';
+    else if (TAB === 'people') line = 'What each person spent and received · ' + (sub('people') === 'all' ? 'all sites together' : ((DB.sites.find(x => x.id === sub('people')) || {}).name || ''));
     else if (TAB === 'more') line = 'Excel, backups, masters and settings';
   } catch (e) { }
   return { t: esc(TAB_TITLE[TAB] || ''), s: esc(line) };
@@ -2446,11 +2458,12 @@ function menuSheet(s) {
     diesel: dec(t.dsLitres) + ' L',
     vendor: money(vpend) + ' due',
     manager: mgs.length ? money(mbal) : 'None yet',
+    people: 'All sites together',
     more: 'Excel, backup, settings'
   };
   const more = [['excel', 'Excel and backup', 'sheet'], ['set', 'Settings', 'gear']]
     .concat(s.mods.funds ? [['funds', 'Money received', 'wallet']] : [])
-    .concat([['person', 'Person-wise account', 'person'], ['mast', 'Masters', 'list'], ['sites', 'Sites', 'site']]);
+    .concat([['mast', 'Masters', 'list'], ['sites', 'Sites', 'site']]);
   const line = (act, label, icn, extra) => `<div class="row" data-close="1" data-act="${act}"${extra || ''}>${ava('', icn, 'c6')}<div class="main"><div class="ttl">${label}</div></div>${ic('chevR', 'chev')}</div>`;
   openSheet('Menu', `
     <div class="mgrid">${allTabs(s).filter(([k]) => k !== 'more').map(([k]) => `<button class="mtile ${TAB === k ? 'on' : ''}" data-act="tab" data-v="${k}">
@@ -2642,7 +2655,7 @@ VIEW.dash = s => {
   ${s.mods.machine !== false ? commCard(s, true) : ''}
 
   <div class="card">
-    <h3>Manager-wise spending</h3>
+    <h3>Manager-wise spending<button class="rowbtn" style="margin-left:auto" data-act="tab" data-v="people">All sites &rsaquo;</button></h3>
     <div class="scroll"><table>
       <thead><tr><th>Name</th>${s.mods.funds ? '<th class="n">Received</th>' : ''}<th class="n">Site</th><th class="n">Diesel</th><th class="n">Vendor</th><th class="n">Total</th>${s.mods.funds ? '<th class="n">Balance</th>' : ''}</tr></thead>
       <tbody>${people.map(x => `<tr><td class="nowrap">${esc(x.p)}</td>${s.mods.funds ? `<td class="n">${x.ps.getsAdvance ? money0(x.ps.received) : '<span class="tiny">—</span>'}</td>` : ''}<td class="n">${money0(x.ps.site + x.ps.mu)}</td><td class="n">${money0(x.ps.dsl)}</td><td class="n">${money0(x.ps.vp + x.ps.op)}</td><td class="n"><b>${money0(x.ps.total)}</b></td>${s.mods.funds ? `<td class="n">${x.ps.getsAdvance ? '<b style="color:' + (x.ps.balance < 0 ? 'var(--due)' : 'var(--paid)') + '">' + money0(x.ps.balance) + '</b>' : '<span class="tiny">—</span>'}</td>` : ''}</tr>`).join('') || '<tr><td colspan="6" class="muted">Add names in Masters.</td></tr>'}</tbody>
@@ -3407,6 +3420,12 @@ function mgrView(s) {
 
 
 
+  <div class="card"><h3>Manager app</h3><div class="pad">
+    <div class="tiny" style="margin-bottom:10px;line-height:1.7">Managers fill <b>money spent</b> (site-wise) and <b>money received</b> from their own phone. Entries come here by themselves and wait for your approval. Give each manager a <b>Site Manager</b> login in Menu &rarr; Users, with their cash book name.</div>
+    <input id="f_mgrlink" readonly value="${esc(mgrLink())}" style="width:100%;margin-bottom:8px">
+    <div class="btnrow"><button class="btn sec sm" style="flex:1" data-act="mgLinkCopy">Copy link</button><button class="btn sm" style="flex:1" data-act="mgLinkWa">${ICON.share}Send on WhatsApp</button></div>
+  </div></div>
+
   <div class="card"><h3>How this works</h3><div class="pad tiny" style="line-height:1.9">
     <b>1.</b> Add the manager here.<br>
     <b>2.</b> Record the money you give them with "+ Money given".<br>
@@ -3453,6 +3472,194 @@ function mgrDetailSheet(id) {
         <div class="sub">${fmtDate(o.e.date)} &middot; ${esc(o.s.name)} &middot; ${esc(o.e.category)}</div></div>
         <div class="amt">${money0(o.e.amount)}</div></div>`).join('') : '<div class="empty">No expenses yet.</div>'}
     </div>`, null, null);
+}
+
+/* ============================================================
+   PERSON-WISE  —  each person's spending and money received,
+   all sites together or one site at a time
+   ============================================================ */
+const pKey = n => String(n == null ? '' : n).trim().replace(/\s+/g, ' ').toLowerCase();
+const PP_KIND = { exp: 'Expense', dsl: 'Diesel', vp: 'Vendor payment', mu: 'Murum', op: 'Owner payment', fund: 'Money received', mfund: 'Money given' };
+const PP_ICON = { dsl: 'diesel', vp: 'vendor', mu: 'murum', op: 'machine' };
+function ppPeriods() {
+  const t = today(), mk = monthKey(t);
+  const y = +mk.slice(0, 4), m = +mk.slice(5, 7);
+  const lastMk = m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+  const fy = m >= 4 ? y : y - 1, fyFrom = fy + '-04-01', fyTo = (fy + 1) + '-03-31';
+  return [
+    ['all', 'All time', () => true],
+    ['month', 'This month', d => monthKey(d) === mk],
+    ['last', 'Last month', d => monthKey(d) === lastMk],
+    ['fy', 'This FY ' + fy + '-' + String(fy + 1).slice(2), d => String(d || '') >= fyFrom && String(d || '') <= fyTo]
+  ];
+}
+function ppPeriod() { const l = ppPeriods(); return l.find(p => p[0] === UI.ppPer) || l[0]; }
+/* sid: 'all' or one site id; inPer(date): the chosen period */
+function peopleBook(sid, inPer) {
+  const book = new Map();
+  const P = name => {
+    const k = pKey(name);
+    let o = book.get(k);
+    if (!o) book.set(k, o = { key: k, vars: {}, spent: [], got: [], sp: 0, rc: 0, sites: new Set(), mgr: null, adv: false });
+    const nm = String(name == null ? '' : name).trim().replace(/\s+/g, ' ');
+    if (nm) o.vars[nm] = (o.vars[nm] || 0) + 1;
+    return o;
+  };
+  const sites = (DB.sites || []).filter(s => sid === 'all' || s.id === sid);
+  (DB.managers || []).forEach(m => { const o = P(m.name); o.mgr = m; });
+  sites.forEach(s => {
+    (s.people || []).forEach(n => P(n));
+    (s.advance || []).forEach(n => { P(n).adv = true; });
+    const add = (kind, r, amt, cat, title) => {
+      if (!inPer(r.date)) return;
+      const o = P(r.paidBy);
+      o.spent.push({ kind, s, r, date: r.date || '', amt, cat, title }); o.sp += amt; o.sites.add(s.id);
+    };
+    (s.expenseLog || []).forEach(e => { if (st(e) === 'Paid') add('exp', e, num(e.amount), e.category || 'Expense', e.desc || e.category || 'Expense'); });
+    (s.dieselLog || []).forEach(d => { if (st(d) === 'Paid') add('dsl', d, num(d.amount), 'Diesel', 'Diesel' + (d.vendor ? ' · ' + d.vendor : '')); });
+    (s.vendorPayments || []).forEach(p => add('vp', p, num(p.amount), 'Vendor payments', p.vendor || 'Vendor payment'));
+    (s.murumLog || []).forEach(m => { if (st(m) === 'Paid') add('mu', m, mAmt(m), 'Murum', 'Murum' + (m.vendor ? ' · ' + m.vendor : '')); });
+    (s.ownerPayments || []).forEach(p => add('op', p, num(p.amount), 'Machine owner payments', p.owner || 'Owner payment'));
+    (s.funds || []).forEach(f => {
+      if (!inPer(f.date)) return;
+      const o = P(f.person); o.got.push({ kind: 'fund', s, r: f, date: f.date || '', amt: num(f.amount) }); o.rc += num(f.amount);
+    });
+  });
+  /* money given to a manager belongs to no site, so it counts only under All sites */
+  if (sid === 'all') (DB.mfunds || []).forEach(f => {
+    if (!inPer(f.date)) return;
+    const o = P(f.manager); o.got.push({ kind: 'mfund', s: null, r: f, date: f.date || '', amt: num(f.amount) }); o.rc += num(f.amount);
+  });
+  let list = [...book.values()];
+  list.forEach(o => {
+    const v = Object.entries(o.vars).sort((a, b) => b[1] - a[1]);
+    o.name = o.key ? (v.length ? v[0][0] : o.key) : '';
+    o.track = !!(o.mgr || o.adv || o.rc);          /* a balance makes sense for people who are given money */
+    o.bal = o.rc - o.sp;
+    o.spent.sort(byDateDesc); o.got.sort(byDateDesc);
+  });
+  const me = window.SM_SYNC && window.SM_SYNC.me ? window.SM_SYNC.me() : null;
+  if (me && me.role === 'manager') list = list.filter(o => o.key && o.key === pKey(me.person));
+  return list;
+}
+const ppAmt = o => o.track ? o.bal : o.sp;
+/* short figures for the small boxes: 97.9 L, 1.02 Cr */
+const ppShort = v => { const a = Math.abs(num(v)), sg = num(v) < 0 ? '-' : ''; return a >= 1e7 ? sg + dec(a / 1e7, 2) + ' Cr' : a >= 1e5 ? sg + dec(a / 1e5, 1) + ' L' : money0(v); };
+function ppPerChips() {
+  return `<div class="chips ppper">${ppPeriods().map(([k, l]) => `<button class="chip ${ppPeriod()[0] === k ? 'on' : ''}" data-act="ppPer" data-v="${k}">${l}</button>`).join('')}</div>`;
+}
+VIEW.people = s => {
+  const sid = sub('people'), all = sid === 'all';
+  const per = ppPeriod();
+  const book = peopleBook(sid, per[2]);
+  if (typeof UI.ppWho === 'string') {
+    const o = book.find(x => x.key === UI.ppWho);
+    if (o) return personPage(o, sid, per);
+    UI.ppWho = null;
+  }
+  const siteName = all ? 'All sites' : ((DB.sites.find(x => x.id === sid) || {}).name || '');
+  const named = book.filter(o => o.key && (o.sp || o.rc)).sort((a, b) => b.sp - a.sp || b.rc - a.rc || a.name.localeCompare(b.name));
+  const idle = book.filter(o => o.key && !o.sp && !o.rc);
+  const none = book.find(o => !o.key && o.sp);
+  const spent = book.reduce((a, o) => a + o.sp, 0), got = book.reduce((a, o) => a + o.rc, 0);
+  const hold = named.filter(o => o.track).reduce((a, o) => a + o.bal, 0);
+  const top = Math.max(1, ...named.map(o => o.sp));
+  const nEnt = o => o.spent.length + o.got.length;
+  return `${ppPerChips()}
+  <div class="hero">
+    <div class="lbl">${esc(siteName)} &middot; ${esc(per[1])} &mdash; spent by people</div>
+    <div class="big"><small>&#8377;</small>${money0(spent)}</div>
+    <div class="hsplit">
+      <div><div class="k">RECEIVED</div><div class="v num">${ppShort(got)}</div></div>
+      <div><div class="k">${all ? 'IN HAND' : 'ENTRIES'}</div><div class="v num">${all ? ppShort(hold) : book.reduce((a, o) => a + o.spent.length, 0)}</div></div>
+      <div><div class="k">PEOPLE</div><div class="v num">${named.length}</div></div>
+    </div>
+  </div>
+  <div class="card"><h3>People<small>${named.length}</small></h3>
+    ${named.map(o => {
+      const a = all ? ppAmt(o) : o.sp;
+      const lbl = all && o.track ? (o.bal < 0 ? 'spent more' : 'in hand') : 'spent';
+      return `<div class="row" data-act="ppWho" data-v="${esc(o.key)}">${ava(o.name)}
+        <div class="main"><div class="ttl">${esc(o.name)}</div>
+          <div class="sub">spent ${money(o.sp)}${o.rc ? ' &middot; received ' + money(o.rc) : ''} &middot; ${nEnt(o)} ${nEnt(o) === 1 ? 'entry' : 'entries'}${all && o.sites.size > 1 ? ' &middot; ' + o.sites.size + ' sites' : ''}</div>
+          <div class="mbar"><i style="width:${Math.max(2, Math.round(o.sp / top * 100))}%"></i></div></div>
+        <div class="amt"${all && o.track && o.bal < 0 ? ' style="color:var(--due)"' : ''}>${money0(a)}<div class="tiny">${lbl}</div></div></div>`;
+    }).join('') || `<div class="empty">No spending by anyone ${per[0] === 'all' ? 'yet' : 'in this period'}.</div>`}
+  </div>
+  ${none ? `<div class="card"><div class="row" data-act="ppWho" data-v="">${ava('', 'tag', 'c6')}<div class="main"><div class="ttl">Paid &mdash; name not marked</div><div class="sub">${none.spent.length} ${none.spent.length === 1 ? 'entry' : 'entries'} marked Paid without "Paid by". Open to fill the name.</div></div><div class="amt">${money0(none.sp)}</div></div></div>` : ''}
+  <div class="card"><h3>How this works</h3><div class="pad tiny" style="line-height:1.8">
+    <b>Spent</b> = expenses, diesel and murum marked Paid with this name in <b>Paid by</b>, plus vendor and owner payments made by them.<br>
+    <b>Received</b> = money given to them (Managers &rarr; Money given, and each site&rsquo;s Money received).<br>
+    <b>In hand</b> = received &minus; spent, for people who are given money. Money given to a manager has no site, so it counts under <b>All sites</b> only.
+    ${idle.length ? '<br>No entries ' + (per[0] === 'all' ? '' : 'in this period ') + 'for: ' + idle.map(o => esc(o.name)).join(', ') + '.' : ''}
+  </div></div>`;
+};
+function personPage(o, sid, per) {
+  const all = sid === 'all';
+  const siteName = all ? 'All sites' : ((DB.sites.find(x => x.id === sid) || {}).name || '');
+  const name = o.key ? o.name : 'Name not marked';
+  const big = all && o.track ? o.bal : o.sp;
+  const bySite = (DB.sites || []).map(s => {
+    const sp = o.spent.filter(x => x.s.id === s.id), gt = o.got.filter(x => x.s && x.s.id === s.id);
+    return { s, n: sp.length, amt: sp.reduce((a, x) => a + x.amt, 0), rc: gt.reduce((a, x) => a + x.amt, 0) };
+  }).filter(x => x.n || x.rc).sort((a, b) => b.amt - a.amt);
+  const cats = {}; o.spent.forEach(x => { cats[x.cat] = (cats[x.cat] || 0) + x.amt; });
+  const catList = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+  const topCat = Math.max(1, ...catList.map(c => c[1]));
+  const more = UI.ppMore || 60;
+  const shown = o.spent.slice(0, more);
+  const editable = !document.body.classList.contains('sm-viewer');
+  const row = x => `<div class="row" data-act="ppOpen" data-v="${esc(x.kind + '|' + x.s.id + '|' + x.r.id)}">${ava(x.title, x.kind === 'exp' ? catIcon(x.cat) : PP_ICON[x.kind], x.kind === 'exp' ? '' : 'c6')}
+    <div class="main"><div class="ttl">${esc(x.title)}</div><div class="sub">${esc([x.kind === 'exp' ? x.cat : PP_KIND[x.kind], all ? x.s.name : '', x.r.mode, x.r.remark].filter(Boolean).join(' · '))}</div></div>
+    <div class="amt">${money0(x.amt)}</div></div>`;
+  const gotRow = x => `<div class="row" data-act="${x.kind === 'mfund' ? 'mgFundEdit' : 'ppOpen'}" data-v="${esc(x.kind === 'mfund' ? x.r.id : 'fund|' + x.s.id + '|' + x.r.id)}">${ava('', 'recv', 'c1')}
+    <div class="main"><div class="ttl">${esc(fmtDate(x.date))}${x.r.from ? ' &middot; from ' + esc(x.r.from) : ''}</div><div class="sub">${esc([x.kind === 'mfund' ? 'Money given (all sites)' : x.s.name, x.r.mode, x.r.remark].filter(Boolean).join(' · '))}</div></div>
+    <div class="amt in">+${money0(x.amt)}</div></div>`;
+  return `<div class="ppback"><button class="chip" data-act="ppBack">&lsaquo; All people</button></div>
+  ${ppPerChips()}
+  <div class="hero">
+    <div class="lbl">${esc(name)} &middot; ${esc(siteName)} &middot; ${esc(per[1])}</div>
+    <div class="big"${all && o.track && o.bal < 0 ? ' style="color:#FF9F94"' : ''}><small>&#8377;</small>${money0(big)}</div>
+    <div class="tiny" style="color:#A3ABB8;margin-top:2px">${all && o.track ? (o.bal < 0 ? 'spent more than received' : 'in hand') : 'spent'}</div>
+    <div class="hsplit">
+      <div><div class="k">RECEIVED</div><div class="v num">${ppShort(o.rc)}</div></div>
+      <div><div class="k">SPENT</div><div class="v num">${ppShort(o.sp)}</div></div>
+      <div><div class="k">ENTRIES</div><div class="v num">${o.spent.length + o.got.length}</div></div>
+    </div>
+  </div>
+  <div class="btnrow" style="margin:0 0 12px">
+    ${o.mgr && editable ? `<button class="btn" style="flex:1" data-act="mgFund" data-v="${esc(o.mgr.id)}">${ICON.plus}Money given</button>` : ''}
+    ${o.key ? `<button class="btn sec" style="flex:1" data-act="ppShare">${ICON.share || ''}Share on WhatsApp</button>` : ''}
+  </div>
+  ${all && bySite.length ? `<div class="card"><h3>Site-wise<small>${bySite.length}</small></h3><div class="scroll"><table>
+    <thead><tr><th>Site</th><th class="n">Entries</th><th class="n">Spent</th>${bySite.some(x => x.rc) ? '<th class="n">Received</th>' : ''}</tr></thead>
+    <tbody>${bySite.map(x => `<tr data-act="sub" data-t="people" data-v="${esc(x.s.id)}" style="cursor:pointer"><td class="nowrap">${esc(x.s.name)}</td><td class="n">${x.n}</td><td class="n">${money0(x.amt)}</td>${bySite.some(y => y.rc) ? `<td class="n">${money0(x.rc)}</td>` : ''}</tr>`).join('')}</tbody>
+    ${bySite.length > 1 ? `<tfoot><tr><td>TOTAL</td><td class="n">${bySite.reduce((a, x) => a + x.n, 0)}</td><td class="n">${money0(bySite.reduce((a, x) => a + x.amt, 0))}</td>${bySite.some(x => x.rc) ? `<td class="n">${money0(bySite.reduce((a, x) => a + x.rc, 0))}</td>` : ''}</tr></tfoot>` : ''}
+  </table></div><div class="pad tiny">Tap a site to see only that site.</div></div>` : ''}
+  ${catList.length ? `<div class="card"><h3>Spent on<small>${catList.length} ${catList.length === 1 ? 'head' : 'heads'}</small></h3>${catList.slice(0, UI.ppCats ? 999 : 8).map(([c, v]) => `<div class="pcat"><div class="pc1"><span>${esc(c)}</span><b>${money0(v)}</b><em>${o.sp ? Math.round(v / o.sp * 100) : 0}%</em></div><div class="mbar"><i style="width:${Math.max(2, Math.round(v / topCat * 100))}%"></i></div></div>`).join('')}
+    ${catList.length > 8 ? `<div class="pad" style="padding-top:4px"><button class="btn sec sm" style="width:100%" data-act="ppCats">${UI.ppCats ? 'Show fewer' : 'Show all ' + catList.length}</button></div>` : ''}</div>` : ''}
+  ${o.got.length ? `<div class="card"><h3>Money received<small>${o.got.length}</small></h3>${o.got.map(gotRow).join('')}</div>` : ''}
+  <div class="card"><h3>Spent<small>${o.spent.length}</small></h3>
+    ${o.spent.length ? byDay(shown, row, x => x.amt, money, o.spent) : '<div class="empty">Nothing spent in this view.</div>'}
+    ${o.spent.length > more ? `<div class="pad"><button class="btn sec" style="width:100%" data-act="ppMore">Show ${Math.min(100, o.spent.length - more)} more</button></div>` : ''}
+  </div>`;
+}
+function ppStatement() {
+  const sid = sub('people'), per = ppPeriod();
+  const o = peopleBook(sid, per[2]).find(x => x.key === UI.ppWho); if (!o) return '';
+  const all = sid === 'all';
+  const L = ['*' + o.name + ' — account*', (all ? 'All sites' : (DB.sites.find(x => x.id === sid) || {}).name) + ' · ' + per[1], ''];
+  L.push('Received: ' + money(o.rc), 'Spent: ' + money(o.sp));
+  if (all && o.track) L.push((o.bal < 0 ? 'Spent more than received: ' : 'In hand: ') + money(Math.abs(o.bal)));
+  const bySite = {}; o.spent.forEach(x => { bySite[x.s.name] = (bySite[x.s.name] || 0) + x.amt; });
+  const bs = Object.entries(bySite).sort((a, b) => b[1] - a[1]);
+  if (all && bs.length > 1) { L.push('', 'By site:'); bs.forEach(([k, v]) => L.push('• ' + k + ': ' + money(v))); }
+  const cats = {}; o.spent.forEach(x => { cats[x.cat] = (cats[x.cat] || 0) + x.amt; });
+  const cl = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+  if (cl.length) { L.push('', 'Spent on:'); cl.slice(0, 12).forEach(([k, v]) => L.push('• ' + k + ': ' + money(v))); }
+  if (o.got.length) { L.push('', 'Money received:'); o.got.slice(0, 15).forEach(x => L.push('• ' + fmtDate(x.date) + ': ' + money(x.amt) + (x.r.from ? ' from ' + x.r.from : ''))); }
+  L.push('', '— ' + (userName() || 'Site Manager'));
+  return L.join('\n');
 }
 
 /* ---------------- BILLING ---------------- */
@@ -5799,6 +6006,23 @@ document.addEventListener('click', async e => {
     case 'exCat': UI.exCat = v; UI.exMore = 50; render(); break;
     case 'exMore': UI.exMore = (UI.exMore || 50) + 100; render(); break;
     case 'person': UI.person = v; render(); break;
+    case 'ppWho': UI.ppWho = v; UI.ppMore = 60; render(); window.scrollTo(0, 0); break;
+    case 'ppBack': UI.ppWho = null; render(); window.scrollTo(0, 0); break;
+    case 'ppPer': UI.ppPer = v; UI.ppMore = 60; render(); break;
+    case 'ppCats': UI.ppCats = !UI.ppCats; render(); break;
+    case 'ppMore': UI.ppMore = (UI.ppMore || 60) + 100; render(); break;
+    case 'ppShare': { const t = ppStatement(); if (t) window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank'); break; }
+    case 'ppOpen': {
+      const [k, sid2, id] = String(v).split('|'); const ss = (DB.sites || []).find(x => x.id === sid2); if (!ss) break;
+      const f = (arr) => (arr || []).find(x => String(x.id) === id);
+      if (k === 'exp') expenseForm(ss, f(ss.expenseLog));
+      else if (k === 'dsl') dieselForm(ss, f(ss.dieselLog));
+      else if (k === 'vp') vpForm(ss, f(ss.vendorPayments));
+      else if (k === 'mu') murumForm(ss, f(ss.murumLog));
+      else if (k === 'op') ownerPayForm(ss, f(ss.ownerPayments));
+      else if (k === 'fund') fundsForm(ss, f(ss.funds));
+      break;
+    }
     case 'mlAdd': machineForm(s); break;
     case 'mlEdit': machineForm(s, s.machineLog.find(x => x.id === v)); break;
     case 'dAdd': dieselForm(s); break;
@@ -6047,7 +6271,7 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'mgLinkWa':
-      window.open('https://wa.me/?text=' + encodeURIComponent('Manager app — record money received and money spent here every day:\n' + mgrLink()), '_blank');
+      window.open('https://wa.me/?text=' + encodeURIComponent('*Manager app — Veershree*\nFill the money you spend on site and the money you receive, every day:\n' + mgrLink() + '\nSign in with the email and password the admin gave you. On Android: open in Chrome → ⋮ → Add to Home screen. On iPhone: Safari → Share → Add to Home Screen.'), '_blank');
       break;
     case 'mgImport': importManager(); break;
     case 'mArrange': arrangeForm(s); break;
@@ -7228,6 +7452,6 @@ function reportForm(s, kind, machine) {
 
 </script>
 <script src="firebase-config.js?v=3"></script>
-<script type="module" src="sync.js?v=3.4.0"></script>
+<script type="module" src="sync.js?v=3.5.0"></script>
 </body>
 </html>

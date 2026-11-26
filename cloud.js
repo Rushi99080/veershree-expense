@@ -9,7 +9,7 @@
      sm_meta/logos                         logo, bill logo (pictures)
      sm_sites/{siteId}                     one site: name, machines, rates, masters, settings
      sm_sites/{siteId}/entries/{coll_id}   one machine entry / diesel bill / expense / payment / bill / murum / reminder
-     sm_mfunds/{id}                        money given to a manager
+     sm_mfunds/{id}                        money given to a manager (also: money received, entered in the Manager app)
    Every document carries _u (server time of last change) and _ub (who changed it).
    Each phone keeps a full copy and downloads only what changed since last time.
    ========================================================= */
@@ -131,6 +131,17 @@ export async function createCloud(config) {
       const q = f.query(f.collection(db, 'sm_sites', sk, 'entries'), f.where('_c', '==', coll), f.where('date', '==', date));
       let snap; try { snap = await f.getDocs(q); } catch (e) { snap = await f.getDocsFromCache(q); }
       return snap.docs.map(d => ({ path: d.ref.path, data: toPlain(d.data({ serverTimestamps: 'estimate' })) }));
+    },
+    /* ---- used by the Manager app ---- */
+    /* one person's entries on one site, whatever the capitals in "Paid by" (one field, no extra index needed) */
+    watchPaidBy(sk, names, cb, onErr) {
+      const q = f.query(f.collection(db, 'sm_sites', sk, 'entries'), f.where('paidBy', 'in', names.slice(0, 30)));
+      return f.onSnapshot(q, { includeMetadataChanges: true }, snap => cb(snap.docs.map(d => ({ path: d.ref.path, data: toPlain(d.data({ serverTimestamps: 'estimate' })), pending: d.metadata.hasPendingWrites })), { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites }), e => onErr && onErr(e));
+    },
+    /* money given to one manager (the security rules allow a manager only his own name) */
+    watchMfunds(person, cb, onErr) {
+      const q = f.query(f.collection(db, 'sm_mfunds'), f.where('manager', '==', person));
+      return f.onSnapshot(q, { includeMetadataChanges: true }, snap => cb(snap.docs.map(d => ({ path: d.ref.path, data: toPlain(d.data({ serverTimestamps: 'estimate' })), pending: d.metadata.hasPendingWrites })), { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites }), e => onErr && onErr(e));
     },
     async probeRead(kind, arg) {
       let q;
