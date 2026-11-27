@@ -1271,7 +1271,7 @@ function greeting() {
 }
 
 /* ---------- storage ---------- */
-const APP_VERSION = '3.5 · Person-wise and Manager app';
+const APP_VERSION = '3.5.1 · Manager app: own book only';
 const MODES = ['Cash', 'Online / UPI', 'RTGS / NEFT', 'Cheque'];
 let KEY = 'vsms2:db';   /* set per login by sync.js */
 
@@ -1424,17 +1424,28 @@ function mgrLink() {
 /* ---------- MANAGERS (site-nirapeksh) ---------- */
 function mgrList() { const l = (DB.managers || []); return window.SM_SYNC ? window.SM_SYNC.scopeManagers(l) : l; }
 function mgrFunds() { return (DB.mfunds || []); }
+/* names for "Paid by": the site's people, plus every manager (so an entry made here reaches that manager's account).
+   A Site Manager login sees only the site's people. Names already there keep their spelling. */
+function payers(s, cur) {
+  const seen = new Set(), out = [];
+  const add = n => { const t = String(n == null ? '' : n).trim(); if (!t || seen.has(pKey(t))) return; seen.add(pKey(t)); out.push(t); };
+  (s.people || []).forEach(add);
+  const me = window.SM_SYNC && window.SM_SYNC.me ? window.SM_SYNC.me() : null;
+  if (!(me && me.role === 'manager')) (DB.managers || []).forEach(m => add(m.name));
+  else add(me.person);
+  return cur && !out.includes(cur) ? out.concat([cur]) : out;
+}
 
 /* what a manager received, spent and still holds */
 function mgrStats(name) {
-  const rec = mgrFunds().filter(f => f.manager === name).reduce((a, f) => a + num(f.amount), 0);
+  const rec = mgrFunds().filter(f => pKey(f.manager) === pKey(name)).reduce((a, f) => a + num(f.amount), 0);
   let exp = 0, cnt = 0;
   (DB.sites || []).forEach(s => {
-    s.expenseLog.forEach(e => { if (e.paidBy === name && st(e) === 'Paid') { exp += num(e.amount); cnt++; } });
-    (s.murumLog || []).forEach(m => { if (m.paidBy === name && st(m) === 'Paid') { exp += mAmt(m); cnt++; } });
-    s.dieselLog.forEach(d => { if (d.paidBy === name && st(d) === 'Paid') { exp += num(d.amount); cnt++; } });
-    (s.vendorPayments || []).forEach(p => { if (p.paidBy === name) { exp += num(p.amount); cnt++; } });
-    (s.ownerPayments || []).forEach(p => { if (p.paidBy === name) { exp += num(p.amount); cnt++; } });
+    s.expenseLog.forEach(e => { if (pKey(e.paidBy) === pKey(name) && st(e) === 'Paid') { exp += num(e.amount); cnt++; } });
+    (s.murumLog || []).forEach(m => { if (pKey(m.paidBy) === pKey(name) && st(m) === 'Paid') { exp += mAmt(m); cnt++; } });
+    s.dieselLog.forEach(d => { if (pKey(d.paidBy) === pKey(name) && st(d) === 'Paid') { exp += num(d.amount); cnt++; } });
+    (s.vendorPayments || []).forEach(p => { if (pKey(p.paidBy) === pKey(name)) { exp += num(p.amount); cnt++; } });
+    (s.ownerPayments || []).forEach(p => { if (pKey(p.paidBy) === pKey(name)) { exp += num(p.amount); cnt++; } });
   });
   return { received: rec, spent: exp, entries: cnt, balance: rec - exp };
 }
@@ -1443,10 +1454,11 @@ function mgrStats(name) {
 function mgrBySite(name) {
   return (DB.sites || []).map(s => {
     let amt = 0, n = 0;
-    s.expenseLog.forEach(e => { if (e.paidBy === name && st(e) === 'Paid') { amt += num(e.amount); n++; } });
-    (s.murumLog || []).forEach(m => { if (m.paidBy === name && st(m) === 'Paid') { amt += mAmt(m); n++; } });
-    s.dieselLog.forEach(d => { if (d.paidBy === name && st(d) === 'Paid') { amt += num(d.amount); n++; } });
-    (s.vendorPayments || []).forEach(p => { if (p.paidBy === name) { amt += num(p.amount); n++; } });
+    s.expenseLog.forEach(e => { if (pKey(e.paidBy) === pKey(name) && st(e) === 'Paid') { amt += num(e.amount); n++; } });
+    (s.murumLog || []).forEach(m => { if (pKey(m.paidBy) === pKey(name) && st(m) === 'Paid') { amt += mAmt(m); n++; } });
+    s.dieselLog.forEach(d => { if (pKey(d.paidBy) === pKey(name) && st(d) === 'Paid') { amt += num(d.amount); n++; } });
+    (s.vendorPayments || []).forEach(p => { if (pKey(p.paidBy) === pKey(name)) { amt += num(p.amount); n++; } });
+    (s.ownerPayments || []).forEach(p => { if (pKey(p.paidBy) === pKey(name)) { amt += num(p.amount); n++; } });
     return { site: s, amount: amt, entries: n };
   }).filter(x => x.entries);
 }
@@ -3439,9 +3451,9 @@ function mgrDetailSheet(id) {
   if (!m) return;
   const x = mgrStats(m.name);
   const sites = mgrBySite(m.name);
-  const funds = mgrFunds().filter(f => f.manager === m.name).sort(byDateDesc);
+  const funds = mgrFunds().filter(f => pKey(f.manager) === pKey(m.name)).sort(byDateDesc);
   const exps = [];
-  (DB.sites || []).forEach(s => s.expenseLog.forEach(e => { if (e.paidBy === m.name && st(e) === 'Paid') exps.push({ e, s }); }));
+  (DB.sites || []).forEach(s => s.expenseLog.forEach(e => { if (pKey(e.paidBy) === pKey(m.name) && st(e) === 'Paid') exps.push({ e, s }); }));
   exps.sort((a, b) => String(b.e.date).localeCompare(String(a.e.date)));
   openSheet(m.name, `
     <div class="card"><div class="scroll"><table><tbody>
@@ -4921,7 +4933,7 @@ function dieselForm(s, rec) {
       </div>
       ${segField('Payment Status', 'f_st', ['Paid', 'Unpaid'], st(r), 'pu')}
       <div class="f2">
-        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(s.people, r.paidBy, '— select —')}</select></div>
+        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(payers(s, r.paidBy), r.paidBy, '— select —')}</select></div>
         <div class="field"><label>Bill no</label><input id="f_bill" value="${esc(r.bill || '')}"></div>
       </div>
       <div class="f2">
@@ -4956,7 +4968,7 @@ function expenseForm(s, rec) {
       </div>
       ${segField('Payment Status', 'f_st', ['Paid', 'Unpaid'], st(r), 'pu')}
       <div class="f2">
-        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(s.people, r.paidBy, '— select —')}</select></div>
+        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(payers(s, r.paidBy), r.paidBy, '— select —')}</select></div>
         <div class="field"><label>Payment mode</label><select id="f_mode">${selOpts(MODES, r.mode, '— mode —')}</select></div>
       </div>
       <div class="field"><label>Remark</label><input id="f_rem" value="${esc(r.remark || '')}"></div>
@@ -4986,7 +4998,7 @@ function vpForm(s, rec, preVendor) {
       <div id="f_bal" class="tiny" style="margin:-4px 0 10px">${vs ? 'Balance: <b>' + money(vs.remaining) + '</b>' : ''}</div>
       <div class="f2">
         <div class="field"><label>Amount paid (Rs)</label><input type="number" inputmode="decimal" id="f_amt" value="${has(r.amount) ? r.amount : ''}"></div>
-        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(s.people, r.paidBy, '— select —')}</select></div>
+        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(payers(s, r.paidBy), r.paidBy, '— select —')}</select></div>
       </div>
       <div class="f2">
         <div class="field"><label>Payment mode</label><select id="f_mode">${selOpts(MODES, r.mode || 'Online / UPI')}</select></div>
@@ -5124,7 +5136,7 @@ function murumForm(s, rec) {
       <div class="field"><label>Amount (Rs)</label><input type="number" inputmode="decimal" id="f_amt" value="${has(r.amount) && num(r.amount) ? r.amount : ''}" placeholder="auto = ${esc(u)} × rate"></div>
       ${segField('Payment Status', 'f_st', ['Paid', 'Unpaid'], st(r), 'pu')}
       <div class="f2">
-        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(s.people, r.paidBy, '— select —')}</select></div>
+        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(payers(s, r.paidBy), r.paidBy, '— select —')}</select></div>
         <div class="field"><label>Payment mode</label><select id="f_mode">${selOpts(MODES, r.mode, '— mode —')}</select></div>
       </div>
       <div class="f2">
@@ -5190,7 +5202,7 @@ function ownerPayForm(s, rec) {
       <div id="f_bal" class="tiny" style="margin:-4px 0 10px">${os ? 'Rent balance: <b>' + money(os.balance) + '</b>' : ''}</div>
       <div class="f2">
         <div class="field"><label>Amount (Rs)</label><input type="number" inputmode="decimal" id="f_amt" value="${has(r.amount) ? r.amount : ''}"></div>
-        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(s.people, r.paidBy, '— select —')}</select></div>
+        <div class="field"><label>Paid by</label><select id="f_by">${selOpts(payers(s, r.paidBy), r.paidBy, '— select —')}</select></div>
       </div>
       <div class="f2">
         <div class="field"><label>Mode</label><select id="f_mode">${selOpts(MODES, r.mode || 'RTGS / NEFT')}</select></div>
@@ -7452,6 +7464,6 @@ function reportForm(s, kind, machine) {
 
 </script>
 <script src="firebase-config.js?v=3"></script>
-<script type="module" src="sync.js?v=3.5.0"></script>
+<script type="module" src="sync.js?v=3.5.1"></script>
 </body>
 </html>

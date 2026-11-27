@@ -2,8 +2,8 @@
    The app's own files: network first (so updates show up), phone copy when there is no network.
    Firebase library and fonts: phone copy first (they never change).
    Login and database traffic is never touched here — Firebase keeps its own offline copy. */
-const VERSION = 'vsm-3.5.0';
-const CORE = ['./', 'index.html', 'sync.js?v=3.5.0', 'cloud.js?v=3.2.0', 'ai.js?v=1.0.0', 'push.js?v=1.0.0', 'firebase-config.js?v=3', 'manifest.webmanifest',
+const VERSION = 'vsm-3.5.1';
+const CORE = ['./', 'index.html', 'sync.js?v=3.5.1', 'cloud.js?v=3.2.0', 'ai.js?v=1.0.0', 'push.js?v=1.0.0', 'firebase-config.js?v=3', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const SDK = 'https://www.gstatic.com/firebasejs/13.4.0/';
 const LIBS = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];

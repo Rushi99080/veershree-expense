@@ -671,7 +671,7 @@ async function userSave() {
 function shareLogin(name, email, pass, role) {
   const sup = role === 'supervisor', mgr = role === 'manager';
   const url = appBase() + (sup ? 'supervisor/' : mgr ? 'manager/' : '');
-  const text = `*${sup ? 'Supervisor' : mgr ? 'Manager app' : 'Site Manager'} — Veershree*\nHi ${name}, here is your login.\nOpen: ${url}${mgr ? '\n(fill your expenses and money received here)' : ''}\nEmail: ${email}\nPassword: ${pass}${mgr ? '\nFull Site Manager app, same login: ' + appBase() : ''}\nOn iPhone: open the link in Safari → Share → Add to Home Screen. On Android: open in Chrome → ⋮ → Add to Home screen.`;
+  const text = `*${sup ? 'Supervisor' : mgr ? 'Manager app' : 'Site Manager'} — Veershree*\nHi ${name}, here is your login.\nOpen: ${url}${mgr ? '\n(fill your expenses and money received here)' : ''}\nEmail: ${email}\nPassword: ${pass}\nOn iPhone: open the link in Safari → Share → Add to Home Screen. On Android: open in Chrome → ⋮ → Add to Home screen.`;
   openSheet('Login created', `<div class="card"><div class="pad"><p class="tiny">Send these details to <b>${escH(name)}</b>:</p><pre class="smpre">${escH(text)}</pre>
     <a class="btn" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">Send on WhatsApp</a>
     <button class="btn sec sm" style="width:100%;margin-top:8px" data-x="copy" data-v="${escH(text)}">Copy</button></div></div>`, null, null);

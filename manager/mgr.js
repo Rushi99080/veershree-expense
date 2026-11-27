@@ -1,6 +1,7 @@
 /* =========================================================
    Veershree Manager — a manager's own expense book
    The manager fills what he spent (site-wise) and the money he received.
+   Each login sees only its own book: the cash book name set for it in Users.
    It writes the same entries as the Site Manager app (Expense log of the
    site, and the manager's cash book), so they show up there by themselves,
    marked Pending until the admin approves them.
@@ -8,7 +9,7 @@
 import { createCloud, safeId } from '../cloud.js?v=3.2.0';
 import { pickPhoto, toJpeg, readBillPhoto, matchName } from '../ai.js?v=1.0.0';
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const ROLE_LABEL = { admin: 'Admin', manager: 'Manager', accountant: 'Accountant', viewer: 'Viewer', supervisor: 'Supervisor', bot: 'Reminder robot' };
 const CAN_ENTER = ['manager', 'admin'];
 const MODES = ['Cash', 'Online / UPI', 'RTGS / NEFT', 'Cheque'];
@@ -48,7 +49,7 @@ function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('o
 /* ---------- state ---------- */
 const ME = { uid: '', email: '', name: '', role: '', sites: [], person: '', active: false };
 let CLOUD = null, profUnsub = null, siteUnsub = [], dataUnsub = [], STARTED = false;
-let PERSON = '', MGRS = [];
+let PERSON = '';
 let SITES = new Map();               // site key -> site document (name, categories, vendors)
 let ENT = new Map();                 // site key -> [{ path, data, pending }]   entries "Paid by" this person
 let FUNDS = [], FUNDS_IN = false;    // money received (the cash book)
@@ -119,15 +120,13 @@ async function onProfile(p, u) {
     const sup = ME.role === 'supervisor';
     return gate(`<h2>Not for this login</h2><p class="g-msg">${esc(ROLE_LABEL[ME.role] || ME.role)} logins do not have an expense book.${sup ? ' Use the Supervisor app for machine readings.' : ' Use the Site Manager app.'}</p><a class="btn" href="../${sup ? 'supervisor/' : ''}">${sup ? 'Open the Supervisor app' : 'Open Site Manager'}</a><button class="btn sec" data-a="signOut">Sign out</button>`);
   }
-  if (!isAdmin() && !ME.person) return gateText('No cash book yet', 'Your login has no cash book name yet. Ask the admin: Site Manager → Menu → <b>Users</b> → your name → <b>Cash book</b>.', true);
+  if (!ME.person) return gateText('No cash book yet', isAdmin()
+    ? 'Your login has no cash book name yet. In Site Manager open Menu → <b>Users</b> → your name → <b>Cash book</b>, choose your name and Save. Then tap Check again.'
+    : 'Your login has no cash book name yet. Ask the admin: Site Manager → Menu → <b>Users</b> → your name → <b>Cash book</b>.', true);
   if (!isAdmin() && !ME.sites.length) return gateText('No site yet', 'The admin has not given you a site yet. Ask the admin to tick your sites in <b>Users</b>.', true);
   if (STARTED) return;
   STARTED = true;
-  if (isAdmin()) {
-    try { const app = await CLOUD.getDocServer('sm_meta/app'); MGRS = ((app && app.managers) || []).map(m => String(m.name || '').trim()).filter(Boolean); } catch (e) { MGRS = []; }
-    let want = ''; try { want = localStorage.getItem('vmgr:person:' + ME.uid) || ''; } catch (e) { }
-    PERSON = MGRS.find(n => norm(n) === norm(want)) || MGRS.find(n => norm(n) === norm(ME.name)) || MGRS[0] || ME.name;
-  } else PERSON = ME.person;
+  PERSON = ME.person;   /* only this login's own book — never another manager's */
   CLOUD.rulesOk('v4').then(v => { RULES4 = v; }).catch(() => { });
   watchSites();
 }
@@ -259,7 +258,7 @@ function render() {
   const all = items(), wait = loading();
   const got = all.filter(x => x.t === 'in').reduce((a, x) => a + x.amt, 0), spent = all.filter(x => x.t === 'out').reduce((a, x) => a + x.amt, 0), bal = got - spent;
   $('#top').innerHTML = `<div class="bar">
-      <button class="who" data-a="${isAdmin() ? 'person' : 'menu'}"><img src="icons/icon-192.png" alt=""><span><small>${esc(isAdmin() ? 'Admin · expense book of' : 'Veershree · ' + (ROLE_LABEL[ME.role] || ''))}</small><b>${esc(PERSON)}${isAdmin() ? ' <i class="chev">▾</i>' : ''}</b></span></button>
+      <button class="who" data-a="menu"><img src="icons/icon-192.png" alt=""><span><small>Veershree · ${esc(ROLE_LABEL[ME.role] || '')}</small><b>${esc(PERSON)}</b></span></button>
       <button class="pill" id="pill" data-a="pillInfo"></button>
       <button class="ava" data-a="menu" aria-label="Menu">${esc(initial(ME.name))}</button></div>
     <div class="bal${bal < 0 ? ' neg' : ''}"><small>${bal < 0 ? 'Spent more than received' : 'In hand'}</small><b>${wait && !all.length ? '…' : money(bal)}</b>
@@ -282,7 +281,7 @@ function render() {
     if (x.date !== cur) { cur = x.date; rows += `${rows ? '</div>' : ''}<h3 class="gh"><span>${esc(dayLabel(x.date))}</span>${dayTot[x.date] ? `<small>spent ${money(dayTot[x.date])}</small>` : ''}</h3><div class="card">`; }
     const d = x.e.data;
     const sub = x.t === 'in' ? [d.from ? 'from ' + d.from : '', d.mode, d.remark].filter(Boolean).join(' · ') || 'Cash book'
-      : [x.c === 'expenseLog' ? x.cat : KIND[x.c], siteKeys.length > 1 ? siteName(x.sk) : '', d.mode, x.c !== 'expenseLog' ? 'entered by office' : ''].filter(Boolean).join(' · ');
+      : [x.c === 'expenseLog' ? x.cat : KIND[x.c], siteKeys.length > 1 ? siteName(x.sk) : '', d.mode, d._by !== ME.uid ? 'entered by office' : ''].filter(Boolean).join(' · ');
     rows += `<button class="mrow" data-a="open" data-v="${esc(x.e.path)}"><span class="mic ${x.t === 'in' ? 'in' : x.c === 'expenseLog' ? '' : 'o'}">${x.t === 'in' ? '+' : esc(initial(x.cat))}</span><span class="m"><b>${esc(x.title)}</b><small>${esc(sub)}</small></span><div class="r"><b class="${x.t === 'in' ? 'plus' : ''}">${x.t === 'in' ? '+' : ''}${money(x.amt)}</b>${badge(x.e)}</div></button>`;
   }
   if (rows) rows += '</div>';
@@ -393,33 +392,27 @@ function saveGot() {
   if (e) { if (!editDoc(e, o)) return; } else addFund(o);
   EDIT = null; closeSheet();
 }
-/* diesel, vendor or owner payments the office entered with this person as "Paid by": look only */
+/* entries the office made in Site Manager with this person as "Paid by" (any kind): look only */
 function viewSheet(it) {
   const d = it.e.data;
   const line = (k, v) => has(v) && v !== '' ? `<div class="kv"><span>${k}</span><b>${esc(v)}</b></div>` : '';
   openSheet(esc(KIND[it.c] || 'Entry'), `${whoLine(it.e)}<div class="card pad">
-    ${line('Site', siteName(it.sk))}${line('Date', fmtDate(d.date))}${line('Amount', money(it.amt))}${line('Vendor', d.vendor)}${line('Owner', d.owner)}${line('Litres', d.litres)}${line('Bill no', d.bill)}${line('Payment mode', d.mode)}${line('Remark', d.remark)}</div>
-    <p class="tiny">Entered in Site Manager with you as “Paid by”, so it counts in your spending. To change it, ask the office.</p>`);
+    ${line('Site', siteName(it.sk))}${line('Date', fmtDate(d.date))}${line('Amount', money(it.amt))}${line('Category', it.c === 'expenseLog' ? d.category : '')}${line('What for', it.c === 'expenseLog' ? d.desc : '')}${line('Vendor', d.vendor)}${line('Owner', d.owner)}${line('Litres', d.litres)}${line('Bill no', d.bill)}${line('Payment mode', d.mode)}${line('Remark', d.remark)}</div>
+    <p class="tiny">Entered in Site Manager with you as “Paid by”, so it counts in your spending and shows in that site’s log. To change it, ask the office.</p>`);
 }
 function openItem(path) {
   const it = findItem(path); if (!it) return;
-  if (it.t === 'in') gotSheet(it); else if (it.c === 'expenseLog') expenseSheet(it); else viewSheet(it);
+  if (it.t === 'in') gotSheet(it); else if (it.c === 'expenseLog' && (isAdmin() || it.e.data._by === ME.uid)) expenseSheet(it); else viewSheet(it);
 }
 
 function menuSheet() {
   const names = isAdmin() ? 'All sites' : [...SITES.keys()].map(siteName).join(', ');
   openSheet('Menu', `<div class="card pad"><b class="big">${esc(ME.name)}</b><div class="tiny">${esc(ROLE_LABEL[ME.role] || '')} · ${esc(ME.email)}<br>Sites: ${esc(names)}<br>Cash book: ${esc(PERSON)}</div></div>
-    ${isAdmin() ? '<button class="btn sec" data-a="person">Show another manager’s book</button>' : ''}
     <button class="btn sec" data-a="report">Share statement on WhatsApp</button>
     <button class="btn sec" data-a="passForm">Change password</button>
-    <a class="btn sec" href="../">Open the full Site Manager app</a>
+    ${isAdmin() ? '<a class="btn sec" href="../">Open the full Site Manager app</a>' : ''}
     <button class="btn dgr" data-a="signOut">Sign out</button>
     <p class="tiny center">Manager ${VERSION} · entries go to Site Manager by themselves</p>`);
-}
-function personSheet() {
-  const list = [...new Set([...MGRS, PERSON])].filter(Boolean);
-  openSheet('Whose expense book?', `<div class="card">${list.map(n => `<button class="mrow" data-a="pickPerson" data-v="${esc(n)}"><span class="mic">${esc(initial(n))}</span><span class="m"><b>${esc(n)}</b><small>${norm(n) === norm(PERSON) ? 'Open now' : 'Manager'}</small></span><div class="r">${norm(n) === norm(PERSON) ? '✓' : ''}</div></button>`).join('')}</div>
-    <p class="tiny">As admin you can fill any manager’s book. Managers are added in Site Manager → Managers.</p>`);
 }
 function reportText() {
   const P = periods(), per = P[PER] || P.month;
@@ -484,8 +477,6 @@ document.addEventListener('click', async ev => {
     case 'forgot': { const em = ($('#gate [name=email]') || {}).value; if (!em) return gErr('Type your email first, then tap "Forgot password?".'); try { await CLOUD.resetPassword(em); gErr(''); toast('Password reset email sent to ' + em); } catch (e) { gErr(authMsg(e)); } break; }
     case 'close': EDIT = null; closeSheet(); break;
     case 'menu': menuSheet(); break;
-    case 'person': personSheet(); break;
-    case 'pickPerson': if (norm(v) !== norm(PERSON)) { PERSON = v; try { localStorage.setItem('vmgr:person:' + ME.uid, v); } catch (e) { } SHOW = 80; startData(); } closeSheet(); render(); break;
     case 'pillInfo': toast(pillState()[2]); break;
     case 'per': PER = v; SHOW = 80; render(); break;
     case 'type': TYPE = v; SHOW = 80; render(); break;
